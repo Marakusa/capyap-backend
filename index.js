@@ -81,7 +81,7 @@ app.post('/', async (req, res) => {
                 res.json({
                     filename: filename,
                     key: keyBase64,
-                    url: `https://${req.get('host')}/f/${filename}?c=${encodeURIComponent(keyBase64)}`
+                    url: `http://${req.get('host')}/f/${filename}?c=${encodeURIComponent(keyBase64)}`
                 });
             }
             catch (error) {
@@ -131,20 +131,8 @@ app.get('/f/:filename', (req, res) => {
             }
         }
 
-        // For Discord, return a small HTML page with OG tags if someone opens in browser
-        res.setHeader('Content-Type', 'text/html');
-        res.send(`
-            <html>
-            <head>
-                <meta property="og:title" content="${filename}">
-                <meta property="og:image" content="data:image/jpeg;base64,${decryptedData.data.toString('base64')}">
-                <meta property="og:description" content="Author: ${decryptedData.author.toString('utf8').replace(/\0/g, '')}">
-            </head>
-            <body>
-                <img src="data:image/jpeg;base64,${decryptedData.data.toString('base64')}" />
-            </body>
-            </html>
-        `);
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.send(decryptedData.data);
     } catch (error) {
         console.error("Error reading file:", error);
         const notFoundFileBuffer = fs.readFileSync("404.jpg");
