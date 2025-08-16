@@ -58,14 +58,20 @@ app.post('/', async (req, res) => {
                 const expire = req.query.expire ? 1 : 0;
                 const limitedTime = req.query.limitedTime ? 1 : 0;
 
-                // Store data in file
                 const settingsBuffer = Buffer.alloc(settingsBufferSize);
                 settingsBuffer[0] = expire;
                 settingsBuffer[1] = limitedTime;
+
+                // Store timestamp (8 bytes) at offset 2
+                const uploadTime = BigInt(Date.now());
+                settingsBuffer.writeBigUInt64BE(uploadTime, 2);
+
+                // Author info
                 const authorBuffer = Buffer.alloc(authorBufferSize);
                 const author = req.query.author || "Anonymous";
                 const authorBytes = Buffer.from(author, 'utf8');
                 authorBytes.copy(authorBuffer, 0, 0, Math.min(authorBytes.length, authorBufferSize));
+                
                 // The rest remain zero
                 const encryptedData = Buffer.concat([settingsBuffer, authorBuffer, iv, authTag, encrypted]);
                 fs.writeFileSync(filePath, encryptedData);
@@ -75,7 +81,7 @@ app.post('/', async (req, res) => {
                 res.json({
                     filename: filename,
                     key: keyBase64,
-                    url: `https://${req.get('host')}/f/${filename}?c=${encodeURIComponent(keyBase64)}`
+                    url: `http://${req.get('host')}/f/${filename}?c=${encodeURIComponent(keyBase64)}`
                 });
             }
             catch (error) {
@@ -95,7 +101,6 @@ app.get('/f/:filename', (req, res) => {
     const filePath = path.join(uploadDir, filename);
 
     if (!fs.existsSync(filePath)) {
-        // Disable caching for non-existent files
         res.setHeader('Cache-Control', 'no-store');
         const notFoundFileBuffer = fs.readFileSync("404.jpg");
         res.setHeader('Content-Type', 'image/jpeg');
@@ -105,22 +110,41 @@ app.get('/f/:filename', (req, res) => {
     try {
         const fileBuffer = fs.readFileSync(filePath);
         const decryptedData = decrypt(fileBuffer, req.query.c, res);
-        res.setHeader('Content-Type', 'image/jpeg');
-        if (decryptedData.settings[1] === 1) {
-            res.setHeader('Cache-Control', 'no-store, max-age=0');
-            res.setHeader('Pragma', 'no-cache');
 
-            // If 10 seconds have passed since the file was uploaded, delete it
-            const fileStats = fs.statSync(filePath);
-            const currentTime = Date.now();
-            const fileAge = currentTime - fileStats.mtimeMs; // in milliseconds
+        const settings = decryptedData.settings;
+        const limitedTime = settings[1];
+        const uploadTime = Number(settings.readBigUInt64BE(2));
+
+        res.setHeader('X-Author', decryptedData.author.toString('utf8').replace(/\0/g, '')); // Set author header
+
+        if (limitedTime === 1) {
+            res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate');
+            const fileAge = Date.now() - uploadTime;
             if (fileAge > 10000) { // 10 seconds
+                // Remove the image data from the file but keep the settings
+                const newFileBuffer = Buffer.concat([decryptedData.settings, decryptedData.author]);
+                fs.writeFileSync(filePath, newFileBuffer);
+
                 const expiredFileBuffer = fs.readFileSync("expired.jpg");
                 res.setHeader('Content-Type', 'image/jpeg');
                 return res.send(expiredFileBuffer);
             }
         }
-        res.send(decryptedData.data);
+
+        // For Discord, return a small HTML page with OG tags if someone opens in browser
+        res.setHeader('Content-Type', 'text/html');
+        res.send(`
+            <html>
+            <head>
+                <meta property="og:title" content="${filename}">
+                <meta property="og:image" content="data:image/jpeg;base64,${decryptedData.data.toString('base64')}">
+                <meta property="og:description" content="Author: ${decryptedData.author.toString('utf8').replace(/\0/g, '')}">
+            </head>
+            <body>
+                <img src="data:image/jpeg;base64,${decryptedData.data.toString('base64')}" />
+            </body>
+            </html>
+        `);
     } catch (error) {
         console.error("Error reading file:", error);
         const notFoundFileBuffer = fs.readFileSync("404.jpg");
@@ -135,7 +159,6 @@ function decrypt(encryptedBuffer, keyBase64, res) {
     const key = Buffer.from(keyBase64, 'base64');
     const settings = encryptedBuffer.slice(0, settingsBufferSize);
     const author = encryptedBuffer.slice(settingsBufferSize, settingsBufferSize + authorBufferSize);
-    res.setHeader('X-Author', author.toString('utf8').replace(/\0/g, '')); // Set author header
     const iv = encryptedBuffer.slice(0 + settingsBufferSize + authorBufferSize, 12 + settingsBufferSize + authorBufferSize);
     const authTag = encryptedBuffer.slice(12 + settingsBufferSize + authorBufferSize, 28 + settingsBufferSize + authorBufferSize);
     const encrypted = encryptedBuffer.slice(28 + settingsBufferSize + authorBufferSize);
@@ -144,6 +167,7 @@ function decrypt(encryptedBuffer, keyBase64, res) {
     return {
         data: Buffer.concat([decipher.update(encrypted), decipher.final()]),
         settings: settings,
+        author: author
     };
 }
 
