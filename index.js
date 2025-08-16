@@ -75,7 +75,7 @@ app.post('/', async (req, res) => {
                 res.json({
                     filename: filename,
                     key: keyBase64,
-                    url: `${req.protocol}://${req.get('host')}/f/${filename}?c=${encodeURIComponent(keyBase64)}`
+                    url: `https://${req.get('host')}/f/${filename}?c=${encodeURIComponent(keyBase64)}`
                 });
             }
             catch (error) {
@@ -91,6 +91,9 @@ app.post('/', async (req, res) => {
 
 // Read a file
 app.get('/f/:filename', (req, res) => {
+    // Debug whos requesting the file
+    console.log(`File requested: ${req.params.filename} by ${req.ip}`);
+
     const filename = req.params.filename;
     const filePath = path.join(uploadDir, filename);
 
