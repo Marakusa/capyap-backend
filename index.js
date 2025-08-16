@@ -55,13 +55,13 @@ app.post('/', async (req, res) => {
                 const authTag = cipher.getAuthTag();
 
                 // Settings
-                const oneTimeView = req.query.oneTimeView ? 1 : 0;
                 const expire = req.query.expire ? 1 : 0;
+                const limitedTime = req.query.limitedTime ? 1 : 0;
 
                 // Store data in file
                 const settingsBuffer = Buffer.alloc(settingsBufferSize);
-                settingsBuffer[0] = oneTimeView;
-                settingsBuffer[1] = expire;
+                settingsBuffer[0] = expire;
+                settingsBuffer[1] = limitedTime;
                 const authorBuffer = Buffer.alloc(authorBufferSize);
                 const author = req.query.author || "Anonymous";
                 const authorBytes = Buffer.from(author, 'utf8');
@@ -91,34 +91,40 @@ app.post('/', async (req, res) => {
 
 // Read a file
 app.get('/f/:filename', (req, res) => {
-    // Debug whos requesting the file
-    console.log(`File requested: ${req.params.filename} by ${req.ip}`);
-
     const filename = req.params.filename;
     const filePath = path.join(uploadDir, filename);
 
     if (!fs.existsSync(filePath)) {
         // Disable caching for non-existent files
         res.setHeader('Cache-Control', 'no-store');
-        return res.status(404).send("File not found.");
+        const notFoundFileBuffer = fs.readFileSync("404.jpg");
+        res.setHeader('Content-Type', 'image/jpeg');
+        return res.send(notFoundFileBuffer);
     }
 
     try {
         const fileBuffer = fs.readFileSync(filePath);
         const decryptedData = decrypt(fileBuffer, req.query.c, res);
         res.setHeader('Content-Type', 'image/jpeg');
-        if (decryptedData.settings[0] === 1) {
-            // If expired, disable caching
+        if (decryptedData.settings[1] === 1) {
             res.setHeader('Cache-Control', 'no-store');
+
+            // If 10 seconds have passed since the file was uploaded, delete it
+            const fileStats = fs.statSync(filePath);
+            const currentTime = Date.now();
+            const fileAge = currentTime - fileStats.mtimeMs; // in milliseconds
+            if (fileAge > 10000) { // 10 seconds
+                const expiredFileBuffer = fs.readFileSync("expired.jpg");
+                res.setHeader('Content-Type', 'image/jpeg');
+                return res.send(expiredFileBuffer);
+            }
         }
         res.send(decryptedData.data);
-        if (decryptedData.settings[0] === 1) {
-            // If one-time view, delete the file after serving
-            fs.unlinkSync(filePath);
-        }
     } catch (error) {
         console.error("Error reading file:", error);
-        res.status(404).send("File not found.");
+        const notFoundFileBuffer = fs.readFileSync("404.jpg");
+        res.setHeader('Content-Type', 'image/jpeg');
+        return res.send(notFoundFileBuffer);
     }
 });
 
