@@ -81,7 +81,7 @@ app.post('/', async (req, res) => {
                 res.json({
                     filename: filename,
                     key: keyBase64,
-                    url: `http://${req.get('host')}/f/${filename}?c=${encodeURIComponent(keyBase64)}`
+                    url: `https://${req.get('host')}/f/${filename}?c=${encodeURIComponent(keyBase64)}`
                 });
             }
             catch (error) {
