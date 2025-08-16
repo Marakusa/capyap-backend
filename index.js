@@ -107,7 +107,8 @@ app.get('/f/:filename', (req, res) => {
         const decryptedData = decrypt(fileBuffer, req.query.c, res);
         res.setHeader('Content-Type', 'image/jpeg');
         if (decryptedData.settings[1] === 1) {
-            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('Cache-Control', 'no-store, max-age=0');
+            res.setHeader('Pragma', 'no-cache');
 
             // If 10 seconds have passed since the file was uploaded, delete it
             const fileStats = fs.statSync(filePath);
