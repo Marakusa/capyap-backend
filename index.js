@@ -7,6 +7,12 @@ const fs = require("fs");
 const uuid = require("uuid");
 const sharp = require('sharp');
 const crypto = require('crypto');
+const { Client, Account, OAuthProvider } = require('node-appwrite');
+
+const adminClient = new Client()
+    .setEndpoint(process.env.APPWRITE_ENDPOINT)
+    .setProject(process.env.APPWRITE_PROJECT_ID)
+    .setKey(process.env.APPWRITE_API_KEY);
 
 const app = express();
 app.use(cors());
@@ -24,6 +30,48 @@ const uploadDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true }); // creates folder if missing
 }
+
+app.get('/oauth', async (req, res) => {
+    const account = new Account(adminClient);
+
+    const redirectUrl = await account.createOAuth2Token(
+        OAuthProvider.Discord,
+        process.env.APPWRITE_REDIRECT_URI,
+        process.env.APPWRITE_REDIRECT_URI_ERROR
+    );
+
+    res.redirect(redirectUrl);
+});
+
+app.get('/oauth/success', async (req, res) => {
+    const account = new Account(adminClient);
+
+    // Get the userId and secret from the URL parameters
+    const { userId, secret } = req.query;
+
+    try {
+        // Create the session using the Appwrite client
+        const session = await account.createSession(userId, secret);
+
+        // Set the session cookie
+        res.cookie('a_session_' + process.env.APPWRITE_PROJECT_ID, session.secret, { // Use the session secret as the cookie value
+            httpOnly: true,
+            secure: true,
+            sameSite: 'strict',
+            maxAge: sesion.expire,
+            path: '/'
+        });
+
+        res.redirect(process.env.REDIRECT_URI);
+    } catch (e) {
+        res.status(400).json({ success: false, error: e.message });
+    }
+});
+
+app.get('/oauth/failure', (req, res) => {
+    const errorMessage = req.query.error || "OAuth failed";
+    res.status(400).json({ success: false, error: errorMessage });
+});
 
 // Upload a file
 app.post('/f/upload', async (req, res) => {
