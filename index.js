@@ -61,7 +61,6 @@ app.get('/oauth/success', async (req, res) => {
             httpOnly: true,
             secure: true,
             sameSite: 'strict',
-            expires: session.expire,
             path: '/'
         });
 
