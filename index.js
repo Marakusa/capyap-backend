@@ -62,7 +62,7 @@ app.get('/oauth/success', async (req, res) => {
             secure: true,
             sameSite: 'strict',
             //expires: new Date(Date.now() + session.expire * 1000), // Set cookie expiration based on session expire time
-            maxAge: session.expire, // Alternatively, you can use
+            maxAge: session.expire * 1000, // Alternatively, you can use
             path: '/'
         });
 
