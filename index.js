@@ -56,12 +56,11 @@ app.get('/oauth/success', async (req, res) => {
         // Create the session using the Appwrite client
         const session = await account.createSession(userId, secret);
 
-        console.log(session.expire);
         // Set the session cookie
         res.cookie('a_session_' + process.env.APPWRITE_PROJECT_ID, session.secret, { // Use the session secret as the cookie value
             httpOnly: true,
             secure: true,
-            sameSite: 'strict',
+            sameSite: 'lax',
             expires: new Date(session.expire),
             path: '/'
         });
