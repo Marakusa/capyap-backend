@@ -67,13 +67,13 @@ app.get('/oauth/success', async (req, res) => {
 
         res.redirect(process.env.REDIRECT_URI);
     } catch (e) {
-        res.redirect(process.env.APPWRITE_REDIRECT_URI_ERROR + `error=${encodeURIComponent(e.message)}`);
+        res.redirect(process.env.REDIRECT_URI_ERROR + `error=${encodeURIComponent(e.message)}`);
     }
 });
 
 app.get('/oauth/failure', (req, res) => {
     const errorMessage = req.query.error || "OAuth failed";
-    res.redirect(process.env.APPWRITE_REDIRECT_URI_ERROR + `error=${encodeURIComponent(errorMessage)}`);
+    res.redirect(process.env.REDIRECT_URI_ERROR + `error=${encodeURIComponent(errorMessage)}`);
 });
 
 // Upload a file
