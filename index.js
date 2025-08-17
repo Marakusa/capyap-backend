@@ -7,28 +7,6 @@ const fs = require("fs");
 const uuid = require("uuid");
 const sharp = require('sharp');
 const crypto = require('crypto');
-const sdk = require('node-appwrite');
-
-const requiredEnvVars = [
-  'APPWRITE_ENDPOINT',
-  'APPWRITE_PROJECT_ID',
-  'APPWRITE_API_KEY',
-]
-for (const envVar of requiredEnvVars) {
-  if (!process.env[envVar]) {
-    console.error(`Missing required environment variable: ${envVar}`)
-    process.exit(1)
-  }
-}
-
-const client = new sdk.Client();
-
-client
-    .setEndpoint(process.env.APPWRITE_ENDPOINT)
-    .setProject(process.env.APPWRITE_PROJECT_ID)
-    .setKey(process.env.APPWRITE_API_KEY);
-
-const account = new sdk.Account(client);
 
 const app = express();
 app.use(cors());
@@ -46,21 +24,6 @@ const uploadDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true }); // creates folder if missing
 }
-
-app.get('/oauth/discord', async (req, res) => {
-    try {
-        const redirectUrl = await account.createOAuth2Token(
-            sdk.OAuthProvider.Discord,
-            process.env.REDIRECT_URI,
-            process.env.REDIRECT_URI_ERROR,
-        );
-
-        res.redirect(redirectUrl);
-    } catch (error) {
-        console.error("Error during Discord authentication:", error);
-        res.status(500).send("Error during authentication: " + error.message);
-    }
-});
 
 // Upload a file
 app.post('/f/upload', async (req, res) => {
