@@ -60,7 +60,7 @@ app.get('/oauth/success', async (req, res) => {
         res.cookie('a_session_' + process.env.APPWRITE_PROJECT_ID, session.secret, { // Use the session secret as the cookie value
             httpOnly: true,
             secure: true,
-            sameSite: 'lax',
+            sameSite: 'strict',
             expires: new Date(session.expire),
             path: '/'
         });
