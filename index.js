@@ -79,6 +79,10 @@ app.get('/oauth/failure', (req, res) => {
 // Upload a file
 app.post('/f/upload', async (req, res) => {
     try {
+        if (!req.apiKey || req.apiKey !== process.env.APP_UPLOAD_KEY) {
+            return res.status(403).send("Forbidden: Missing API Key");
+        }
+
         if (!req.files || !req.files.file) {
             return res.status(400).send("No file uploaded.");
         }
