@@ -53,19 +53,7 @@ app.get('/oauth/success', async (req, res) => {
     const { userId, secret } = req.query;
 
     try {
-        // Create the session using the Appwrite client
-        const session = await account.createSession(userId, secret);
-
-        // Set the session cookie
-        res.cookie('a_session_' + process.env.APPWRITE_PROJECT_ID, session.secret, { // Use the session secret as the cookie value
-            httpOnly: true,
-            secure: true,
-            sameSite: 'strict',
-            expires: new Date(session.expire),
-            path: '/'
-        });
-
-        res.redirect(process.env.REDIRECT_URI);
+        res.redirect(process.env.REDIRECT_URI + `userId=${encodeURIComponent(userId)}&secret=${encodeURIComponent(secret)}`);
     } catch (e) {
         res.redirect(process.env.REDIRECT_URI_ERROR + `error=${encodeURIComponent(e.message)}`);
     }
