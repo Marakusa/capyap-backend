@@ -34,9 +34,6 @@ if (!fs.existsSync(uploadDir)) {
 app.get('/oauth', async (req, res) => {
     const account = new Account(adminClient);
 
-    console.log(process.env.APPWRITE_REDIRECT_URI);
-    console.log(process.env.APPWRITE_REDIRECT_URI_ERROR);
-
     const redirectUrl = await account.createOAuth2Token(
         OAuthProvider.Discord,
         process.env.APPWRITE_REDIRECT_URI,
@@ -47,8 +44,6 @@ app.get('/oauth', async (req, res) => {
 });
 
 app.get('/oauth/success', async (req, res) => {
-    const account = new Account(adminClient);
-
     // Get the userId and secret from the URL parameters
     const { userId, secret } = req.query;
 
