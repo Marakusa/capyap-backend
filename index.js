@@ -7,7 +7,7 @@ const fs = require("fs");
 const uuid = require("uuid");
 const sharp = require('sharp');
 const crypto = require('crypto');
-const { Client, Account, OAuthProvider, Databases, ID, Query } = require('node-appwrite');
+const { Client, Account, OAuthProvider, Databases, ID, Query, Users } = require('node-appwrite');
 
 const adminClient = new Client()
     .setEndpoint(process.env.APPWRITE_ENDPOINT)
@@ -97,8 +97,64 @@ app.post('/user/getUploadKey', async (req, res) => {
 
         await account.updatePrefs(keyJson);
         return res.json(keyJson);
-    } catch (e) {
+    } catch (error) {
         console.error("Error when fetching upload key:", error);
+        res.status(500).send(error.message);
+    }
+});
+
+// Delete account
+app.post('/user/delete', async (req, res) => {
+    try {
+        const data = req.body;
+
+        if (!data || !data.sessionKey) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        const userClient = new Client()
+            .setEndpoint(process.env.APPWRITE_ENDPOINT)
+            .setProject(process.env.APPWRITE_PROJECT_ID)
+            .setJWT(data.sessionKey);
+
+        const account = new Account(userClient);
+
+        const user = await account.get();
+        if (!user) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        const keysDatabase = new Databases(adminClient);
+
+        const keys = await keysDatabase.listDocuments(
+            process.env.APPWRITE_DATABASE_ID,
+            process.env.APPWRITE_KEYS_ID,
+            [
+                Query.equal('userId', user.$id)
+            ]);
+        for (let key of keys.documents) {
+            await keysDatabase.deleteDocument(
+                process.env.APPWRITE_DATABASE_ID,
+                process.env.APPWRITE_KEYS_ID,
+                key.$id
+            );
+        }
+
+        const uploadFolder = path.join(__dirname, "uploads", user.$id);
+        if (fs.existsSync(uploadFolder)) {
+            fs.rmdirSync(uploadFolder, { recursive: true, force: true });
+        }
+        
+        const users = new Users(adminClient);
+
+        await users.delete(
+            user.$id
+        );
+
+        res.json({success: true});
+    }
+    catch (error) {
+        console.error("Error in file deletion:", error);
         res.status(500).send(error.message);
     }
 });
@@ -270,8 +326,6 @@ app.post('/f/upload', async (req, res) => {
     try {
         const data = req.body;
 
-        console.log(data);
-        console.log(data.sessionKey);
         if (!data || !data.sessionKey) {
             return res.status(403).send("Unauthorized, please try to log in again.");
         }
