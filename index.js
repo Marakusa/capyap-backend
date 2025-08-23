@@ -90,7 +90,7 @@ app.post('/user/getUploadKey', async (req, res) => {
             });
         }
 
-        const newUploadKey = crypto.randomBytes(16).toString("base64"); // 16 bytes for AES-128
+        const newUploadKey = crypto.randomBytes(512).toString("base64");
         const keyJson = {
             uploadKey: newUploadKey
         };
