@@ -7,7 +7,7 @@ const fs = require("fs");
 const uuid = require("uuid");
 const sharp = require('sharp');
 const crypto = require('crypto');
-const { Client, Account, OAuthProvider } = require('node-appwrite');
+const { Client, Account, OAuthProvider, Databases, ID, Query } = require('node-appwrite');
 
 const adminClient = new Client()
     .setEndpoint(process.env.APPWRITE_ENDPOINT)
@@ -59,11 +59,243 @@ app.get('/oauth/failure', (req, res) => {
     res.redirect(process.env.REDIRECT_URI_ERROR + `error=${encodeURIComponent(errorMessage)}`);
 });
 
+app.post('/user/getUploadKey', async (req, res) => {
+    try {
+        const data = req.body;
+
+        if (!data || !data.sessionKey) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        const userClient = new Client()
+            .setEndpoint(process.env.APPWRITE_ENDPOINT)
+            .setProject(process.env.APPWRITE_PROJECT_ID)
+            .setJWT(data.sessionKey);
+
+        const account = new Account(userClient);
+
+        const user = await account.get();
+        if (!user) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+        
+        const prefs = await account.getPrefs();
+        if (!prefs) {
+            return res.status(500).send("Failed to fetch prefs.");
+        }
+
+        if (prefs.uploadKey) {
+            return res.json({
+                uploadKey: prefs.uploadKey
+            });
+        }
+
+        const newUploadKey = crypto.randomBytes(16).toString("base64"); // 16 bytes for AES-128
+        const keyJson = {
+            uploadKey: newUploadKey
+        };
+
+        await account.updatePrefs(keyJson);
+        return res.json(keyJson);
+    } catch (e) {
+        console.error("Error when fetching upload key:", error);
+        res.status(500).send(error.message);
+    }
+});
+
+// Fetch gallery
+app.post('/f/fetchGallery', async (req, res) => {
+    try {
+        const data = req.body;
+
+        if (!data || !data.sessionKey) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        if (!data.uploadKey) {
+            return res.status(400).send("Upload key not included.");
+        }
+
+        const userClient = new Client()
+            .setEndpoint(process.env.APPWRITE_ENDPOINT)
+            .setProject(process.env.APPWRITE_PROJECT_ID)
+            .setJWT(data.sessionKey);
+
+        const account = new Account(userClient);
+
+        // Check upload key
+        const prefs = await account.getPrefs();
+        if (!prefs || !prefs.uploadKey || prefs.uploadKey != data.uploadKey) {
+            return res.status(403).send("Upload key incorrect, please try to log in again.");
+        }
+
+        const user = await account.get();
+        if (!user) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        const uploadFolder = path.join(__dirname, "uploads", user.$id);
+
+        // If directory doesnt exist create it
+        if (!fs.existsSync(uploadFolder)) {
+            fs.mkdirSync(uploadFolder);
+        }
+
+        // Read the users uploads folder
+        fs.readdir(uploadFolder, async (err, files) => {
+            if (err) {
+                return res.status(500).send(err);
+            }
+            try {
+                // Save key in database
+                const keysDatabase = new Databases(adminClient);
+
+                let fileKeys = await keysDatabase.listDocuments(
+                    process.env.APPWRITE_DATABASE_ID,
+                    process.env.APPWRITE_KEYS_ID,
+                    [
+                        Query.equal('userId', user.$id)
+                    ]);
+                
+                // Get files with stats
+                let filesWithStats = await Promise.all(
+                    files.map(async (file) => {
+                        const filePath = path.join(uploadFolder, file);
+                        const stats = await fs.promises.stat(filePath);
+                        return { 
+                            file, 
+                            mtime: stats.mtime // last modified time
+                        };
+                    })
+                );
+
+                // Sort by modified date DESC
+                filesWithStats.sort((a, b) => b.mtime - a.mtime);
+
+                let output = [];
+                for (let f of filesWithStats) {
+                    const keyDoc = fileKeys.documents.find((doc) => doc.file === `${user.$id}/${f.file}`);
+                    if (!keyDoc) continue; // skip if no key
+                    const key = keyDoc.encryptionKey;
+                    output.push(`${req.protocol}://${req.get('host')}/f/${user.$id}/${f.file}?c=${encodeURIComponent(key)}`);
+                }
+                res.json(output);
+            }
+            catch (error) {
+                return res.status(500).send("Error fetching files: " + error.message);
+            }
+        });
+    }
+    catch (error) {
+        console.error("Error in file upload:", error);
+        res.status(500).send(error.message);
+    }
+});
+
+// Delete cap
+app.post('/f/delete', async (req, res) => {
+    try {
+        const data = req.body;
+
+        if (!data || !data.sessionKey) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        if (!data.uploadKey) {
+            return res.status(400).send("Upload key not included.");
+        }
+
+        if (!data.file) {
+            return res.status(400).send("File not included.");
+        }
+
+        const userClient = new Client()
+            .setEndpoint(process.env.APPWRITE_ENDPOINT)
+            .setProject(process.env.APPWRITE_PROJECT_ID)
+            .setJWT(data.sessionKey);
+
+        const account = new Account(userClient);
+
+        // Check upload key
+        const prefs = await account.getPrefs();
+        if (!prefs || !prefs.uploadKey || prefs.uploadKey != data.uploadKey) {
+            return res.status(403).send("Upload key incorrect, please try to log in again.");
+        }
+
+        const user = await account.get();
+        if (!user) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        const filePath = path.join(__dirname, "uploads", data.file);
+
+        // Delete file
+        fs.rm(filePath, async (err, files) => {
+            if (err) {
+                return res.status(500).send(err);
+            }
+            try {
+                // Remove key in database
+                const keysDatabase = new Databases(adminClient);
+
+                let fileKeys = await keysDatabase.listDocuments(
+                    process.env.APPWRITE_DATABASE_ID,
+                    process.env.APPWRITE_KEYS_ID,
+                    [
+                        Query.equal('file', data.file),
+                        Query.equal('userId', user.$id)
+                    ]);
+                
+                for (let f of fileKeys.documents) {
+                    await keysDatabase.deleteDocument(
+                        process.env.APPWRITE_DATABASE_ID,
+                        process.env.APPWRITE_KEYS_ID,
+                        f.$id);
+                }
+                res.json({success: true});
+            }
+            catch (error) {
+                return res.status(500).send("Error deleting files: " + error.message);
+            }
+        });
+    }
+    catch (error) {
+        console.error("Error in file deletion:", error);
+        res.status(500).send(error.message);
+    }
+});
+
 // Upload a file
 app.post('/f/upload', async (req, res) => {
     try {
-        if (!req.body.apiKey || req.body.apiKey !== process.env.APP_UPLOAD_KEY) {
-            return res.status(403).send("Forbidden: Missing API Key");
+        const data = req.body;
+
+        console.log(data);
+        console.log(data.sessionKey);
+        if (!data || !data.sessionKey) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        if (!data.uploadKey) {
+            return res.status(400).send("Upload key not included.");
+        }
+
+        const userClient = new Client()
+            .setEndpoint(process.env.APPWRITE_ENDPOINT)
+            .setProject(process.env.APPWRITE_PROJECT_ID)
+            .setJWT(data.sessionKey);
+
+        const account = new Account(userClient);
+
+        // Check upload key
+        const prefs = await account.getPrefs();
+        if (!prefs || !prefs.uploadKey || prefs.uploadKey != data.uploadKey) {
+            return res.status(403).send("Upload key incorrect, please try to log in again.");
+        }
+
+        const user = await account.get();
+        if (!user) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
         }
 
         if (!req.files || !req.files.file) {
@@ -72,7 +304,13 @@ app.post('/f/upload', async (req, res) => {
 
         let file = req.files.file;
         const filename = uuid.v4() + ".jpg";
-        const uploadPath = path.join(__dirname, "uploads", filename);
+        const uploadFolder = path.join(__dirname, "uploads", user.$id);
+        const uploadPath = path.join(uploadFolder, filename);
+
+        // If directory doesnt exist create it
+        if (!fs.existsSync(uploadFolder)) {
+            fs.mkdirSync(uploadFolder);
+        }
 
         // Move the file to uploads folder
         file.mv(uploadPath, async (err) => {
@@ -105,7 +343,7 @@ app.post('/f/upload', async (req, res) => {
 
                 // Author info
                 const authorBuffer = Buffer.alloc(authorBufferSize);
-                const author = req.query.author || "Anonymous";
+                const author = `(${user.$id}) ${user.name}`;
                 const authorBytes = Buffer.from(author, 'utf8');
                 authorBytes.copy(authorBuffer, 0, 0, Math.min(authorBytes.length, authorBufferSize));
                 
@@ -115,10 +353,24 @@ app.post('/f/upload', async (req, res) => {
 
                 let keyBase64 = encryptKey.toString('base64');
                 keyBase64 = keyBase64.replace(/=+$/, ''); // Remove trailing '='
+
+                // Save key in database
+                const keysDatabase = new Databases(adminClient);
+
+                keysDatabase.createDocument(
+                    process.env.APPWRITE_DATABASE_ID,
+                    process.env.APPWRITE_KEYS_ID,
+                    ID.unique(),
+                    {
+                        file: `${user.$id}/${filename}`,
+                        encryptionKey: keyBase64,
+                        userId: user.$id
+                    });
+
                 res.json({
                     filename: filename,
                     key: keyBase64,
-                    url: `https://${req.get('host')}/f/${filename}?c=${encodeURIComponent(keyBase64)}`
+                    url: `${req.protocol}://${req.get('host')}/f/${user.$id}/${filename}?c=${encodeURIComponent(keyBase64)}`
                 });
             }
             catch (error) {
@@ -128,16 +380,26 @@ app.post('/f/upload', async (req, res) => {
     }
     catch (error) {
         console.error("Error in file upload:", error);
-        res.status(500).send("Error uploading file: " + error.message);
+        res.status(500).send(error.message);
     }
 });
 
 // Read a file
 app.get('/f/:filename', (req, res) => {
     const filename = req.params.filename;
+    handleReadFile(req, res, filename);
+});
+
+// Read a file
+app.get('/f/:userId/:filename', (req, res) => {
+    const filename = req.params.userId + "/" + req.params.filename;
+    handleReadFile(req, res, filename);
+});
+
+function handleReadFile(req, res, filename) {
     const filePath = path.join(uploadDir, filename);
 
-    if (!fs.existsSync(filePath)) {
+    if (!filename.endsWith(".jpg") || !fs.existsSync(filePath)) {
         res.setHeader('Cache-Control', 'no-store');
         const notFoundFileBuffer = fs.readFileSync("404.jpg");
         res.setHeader('Content-Type', 'image/jpeg');
@@ -176,7 +438,7 @@ app.get('/f/:filename', (req, res) => {
         res.setHeader('Content-Type', 'image/jpeg');
         return res.send(notFoundFileBuffer);
     }
-});
+}
 
 // Decrypt file encrypted with AES-128-GCM (iv + authTag + encrypted)
 function decrypt(encryptedBuffer, keyBase64, res) {
