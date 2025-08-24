@@ -174,6 +174,7 @@ app.post('/user/delete', async (req, res) => {
 app.post('/f/fetchGallery', async (req, res) => {
     try {
         const data = req.body;
+        const fetchFrom = req.query["from"];
 
         if (!data || !data.sessionKey) {
             return res.status(403).send("Unauthorized, please try to log in again.");
@@ -191,57 +192,44 @@ app.post('/f/fetchGallery', async (req, res) => {
             return res.status(403).send("Unauthorized, please try to log in again.");
         }
 
+        // Save key in database
+        const keysDatabase = new Databases(adminClient);
+
+        let pictures;
+
+        if (fetchFrom) {
+            pictures = await keysDatabase.listDocuments(
+                process.env.APPWRITE_DATABASE_ID,
+                process.env.APPWRITE_KEYS_ID,
+                [
+                    Query.equal('userId', user.$id),
+                    Query.orderDesc('\$createdAt'),
+                    Query.greaterThan('\$createdAt', fetchFrom)
+                ]);
+        } else {
+            pictures = await keysDatabase.listDocuments(
+                process.env.APPWRITE_DATABASE_ID,
+                process.env.APPWRITE_KEYS_ID,
+                [
+                    Query.equal('userId', user.$id),
+                    Query.orderDesc('\$createdAt'),
+                ]);
+        }
+        
         const uploadFolder = path.join(__dirname, "uploads", user.$id);
 
         // If directory doesnt exist create it
         if (!fs.existsSync(uploadFolder)) {
             fs.mkdirSync(uploadFolder);
         }
-
-        // Read the users uploads folder
-        fs.readdir(uploadFolder, async (err, files) => {
-            if (err) {
-                return res.status(500).send(err);
-            }
-            try {
-                // Save key in database
-                const keysDatabase = new Databases(adminClient);
-
-                let fileKeys = await keysDatabase.listDocuments(
-                    process.env.APPWRITE_DATABASE_ID,
-                    process.env.APPWRITE_KEYS_ID,
-                    [
-                        Query.equal('userId', user.$id)
-                    ]);
-                
-                // Get files with stats
-                let filesWithStats = await Promise.all(
-                    files.map(async (file) => {
-                        const filePath = path.join(uploadFolder, file);
-                        const stats = await fs.promises.stat(filePath);
-                        return { 
-                            file, 
-                            mtime: stats.mtime // last modified time
-                        };
-                    })
-                );
-
-                // Sort by modified date DESC
-                filesWithStats.sort((a, b) => b.mtime - a.mtime);
-
-                let output = [];
-                for (let f of filesWithStats) {
-                    const keyDoc = fileKeys.documents.find((doc) => doc.file === `${user.$id}/${f.file}`);
-                    if (!keyDoc) continue; // skip if no key
-                    const key = keyDoc.encryptionKey;
-                    output.push(`${req.protocol}://${req.get('host')}/f/${user.$id}/${f.file}?c=${encodeURIComponent(key)}`);
-                }
-                res.json(output);
-            }
-            catch (error) {
-                return res.status(500).send("Error fetching files: " + error.message);
-            }
-        });
+        
+        let output = [];
+        
+        for (let picture of pictures.documents) {
+            const key = picture.encryptionKey;
+            output.push(`${req.protocol}://${req.get('host')}/f/${picture.file}?c=${encodeURIComponent(key)}`);
+        }
+        res.json(output);
     }
     catch (error) {
         console.error("Error in file upload:", error);
@@ -551,7 +539,7 @@ function handleReadFile(req, res, filename) {
         res.setHeader('Content-Type', 'image/jpeg');
         return res.send(notFoundFileBuffer);
     }
-
+    
     try {
         const fileBuffer = fs.readFileSync(filePath);
         const decryptedData = decrypt(fileBuffer, req.query.c, res);
