@@ -356,7 +356,6 @@ app.post('/f/delete', async (req, res) => {
 // Upload a file (directLink)
 app.post('/f/u', async (req, res) => {
     try {
-            console.log("==");
         const query = req.query;
 
         if (!query["k"]) {
@@ -364,7 +363,6 @@ app.post('/f/u', async (req, res) => {
         }
 
         // Fetch key data
-            console.log("Before fetching key: ", new Date());
         const uploadKeysDatabase = new Databases(adminClient);
         const uploadKeys = await uploadKeysDatabase.listDocuments(
             process.env.APPWRITE_DATABASE_ID,
@@ -376,7 +374,6 @@ app.post('/f/u', async (req, res) => {
         if (uploadKeys.documents.length <= 0) {
             return res.status(500).send("Failed to verify upload key. Please try to log in again.");
         }
-            console.log("After fetching key: ", new Date());
 
         const userId = uploadKeys.documents[0].userId;
         const username = uploadKeys.documents[0].username;
@@ -444,11 +441,8 @@ async function uploadImage(userId, username, file, req ,res) {
             return res.status(500).send(err);
         }
         try {
-            console.log("Before compressing: ", new Date());
             const filePath = await compress(file.data, uploadPath);
-            console.log("After compressing: ", new Date());
 
-            console.log("Before emcrypting: ", new Date());
             const encryptKey = crypto.randomBytes(16); // 16 bytes for AES-128
             const iv = crypto.randomBytes(12); // 12 bytes for GCM
 
@@ -479,7 +473,6 @@ async function uploadImage(userId, username, file, req ,res) {
             // The rest remain zero
             const encryptedData = Buffer.concat([settingsBuffer, authorBuffer, iv, authTag, encrypted]);
             fs.writeFileSync(filePath, encryptedData);
-            console.log("After encrypting: ", new Date());
 
             let imageKeyBase64 = encryptKey.toString('base64');
             imageKeyBase64 = imageKeyBase64.replace(/=+$/, ''); // Remove trailing '='
@@ -487,7 +480,6 @@ async function uploadImage(userId, username, file, req ,res) {
             // Save key in database
             const keysDatabase = new Databases(adminClient);
 
-            console.log("Before creating doc: ", new Date());
             keysDatabase.createDocument(
                 process.env.APPWRITE_DATABASE_ID,
                 process.env.APPWRITE_KEYS_ID,
@@ -497,9 +489,7 @@ async function uploadImage(userId, username, file, req ,res) {
                     encryptionKey: imageKeyBase64,
                     userId: userId
                 });
-            console.log("After creating doc: ", new Date());
-
-            console.log("Before socket response: ", new Date());
+            
             const sockets = Array.from(connectedSockets.entries())
                 .filter(([_, data]) => data.userId === userId)
                 .map(([_, data]) => (data.socket));
@@ -510,7 +500,6 @@ async function uploadImage(userId, username, file, req ,res) {
                     console.error(error);
                 }
             });
-            console.log("After socket response: ", new Date());
 
             res.json({
                 filename: filename,
