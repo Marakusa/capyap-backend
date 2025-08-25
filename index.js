@@ -33,7 +33,11 @@ if (process.env.ENV === "dev") {
         }
     });
 } else {
-    io = new Server(server);
+    io = new Server(server, {
+        cors: {
+            origin: 'https://sc.marakusa.me'
+        }
+    });
 }
 
 const connectedSockets = new Map();
