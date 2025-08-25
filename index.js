@@ -383,91 +383,7 @@ app.post('/f/u', async (req, res) => {
         }
 
         let file = req.files.file;
-        const filename = uuid.v4() + ".jpg";
-        const uploadFolder = path.join(__dirname, "uploads", userId);
-        const uploadPath = path.join(uploadFolder, filename);
-
-        // If directory doesnt exist create it
-        if (!fs.existsSync(uploadFolder)) {
-            fs.mkdirSync(uploadFolder);
-        }
-
-        // Move the file to uploads folder
-        file.mv(uploadPath, async (err) => {
-            if (err) {
-                return res.status(500).send(err);
-            }
-            try {
-                const filePath = await compress(file.data, uploadPath);
-
-                const encryptKey = crypto.randomBytes(16); // 16 bytes for AES-128
-                const iv = crypto.randomBytes(12); // 12 bytes for GCM
-
-                // Encrypt the compressed file using AES-128-GCM
-                const compressedBuffer = fs.readFileSync(filePath);
-                const cipher = crypto.createCipheriv('aes-128-gcm', encryptKey, iv);
-                const encrypted = Buffer.concat([cipher.update(compressedBuffer), cipher.final()]);
-                const authTag = cipher.getAuthTag();
-
-                // Settings
-                const expire = req.query.expire ? 1 : 0;
-                const limitedTime = req.query.limitedTime ? 1 : 0;
-
-                const settingsBuffer = Buffer.alloc(settingsBufferSize);
-                settingsBuffer[0] = expire;
-                settingsBuffer[1] = limitedTime;
-
-                // Store timestamp (8 bytes) at offset 2
-                const uploadTime = BigInt(Date.now());
-                settingsBuffer.writeBigUInt64BE(uploadTime, 2);
-
-                // Author info
-                const authorBuffer = Buffer.alloc(authorBufferSize);
-                const author = `(${userId}) ${username}`;
-                const authorBytes = Buffer.from(author, 'utf8');
-                authorBytes.copy(authorBuffer, 0, 0, Math.min(authorBytes.length, authorBufferSize));
-                
-                // The rest remain zero
-                const encryptedData = Buffer.concat([settingsBuffer, authorBuffer, iv, authTag, encrypted]);
-                fs.writeFileSync(filePath, encryptedData);
-
-                let imageKeyBase64 = encryptKey.toString('base64');
-                imageKeyBase64 = imageKeyBase64.replace(/=+$/, ''); // Remove trailing '='
-
-                // Save key in database
-                const keysDatabase = new Databases(adminClient);
-
-                keysDatabase.createDocument(
-                    process.env.APPWRITE_DATABASE_ID,
-                    process.env.APPWRITE_KEYS_ID,
-                    ID.unique(),
-                    {
-                        file: `${userId}/${filename}`,
-                        encryptionKey: imageKeyBase64,
-                        userId: userId
-                    });
-
-                const sockets = Array.from(connectedSockets.entries())
-                    .filter(([_, data]) => data.userId === userId)
-                    .map(([_, data]) => (data.socket));
-                sockets.forEach((socket) => {
-                    try {
-                        socket.emit('addImage');
-                    } catch (error) {
-                        console.error(error);
-                    }
-                });
-
-                res.json({
-                    filename: filename,
-                    key: imageKeyBase64,
-                    url: `${req.protocol}://${req.get('host')}/f/${userId}/${filename}?c=${encodeURIComponent(imageKeyBase64)}`
-                });
-            }
-            catch (error) {
-                return res.status(500).send("Error compressing file: " + error.message);
-            }
-        });
+        await uploadImage(userId, username, file, res);
     }
     catch (error) {
         console.error("Error in file upload:", error);
@@ -501,97 +417,109 @@ app.post('/f/upload', async (req, res) => {
         }
 
         let file = req.files.file;
-        const filename = uuid.v4() + ".jpg";
-        const uploadFolder = path.join(__dirname, "uploads", user.$id);
-        const uploadPath = path.join(uploadFolder, filename);
-
-        // If directory doesnt exist create it
-        if (!fs.existsSync(uploadFolder)) {
-            fs.mkdirSync(uploadFolder);
-        }
-
-        // Move the file to uploads folder
-        file.mv(uploadPath, async (err) => {
-            if (err) {
-                return res.status(500).send(err);
-            }
-            try {
-                const filePath = await compress(file.data, uploadPath);
-
-                const encryptKey = crypto.randomBytes(16); // 16 bytes for AES-128
-                const iv = crypto.randomBytes(12); // 12 bytes for GCM
-
-                // Encrypt the compressed file using AES-128-GCM
-                const compressedBuffer = fs.readFileSync(filePath);
-                const cipher = crypto.createCipheriv('aes-128-gcm', encryptKey, iv);
-                const encrypted = Buffer.concat([cipher.update(compressedBuffer), cipher.final()]);
-                const authTag = cipher.getAuthTag();
-
-                // Settings
-                const expire = req.query.expire ? 1 : 0;
-                const limitedTime = req.query.limitedTime ? 1 : 0;
-
-                const settingsBuffer = Buffer.alloc(settingsBufferSize);
-                settingsBuffer[0] = expire;
-                settingsBuffer[1] = limitedTime;
-
-                // Store timestamp (8 bytes) at offset 2
-                const uploadTime = BigInt(Date.now());
-                settingsBuffer.writeBigUInt64BE(uploadTime, 2);
-
-                // Author info
-                const authorBuffer = Buffer.alloc(authorBufferSize);
-                const author = `(${user.$id}) ${user.name}`;
-                const authorBytes = Buffer.from(author, 'utf8');
-                authorBytes.copy(authorBuffer, 0, 0, Math.min(authorBytes.length, authorBufferSize));
-                
-                // The rest remain zero
-                const encryptedData = Buffer.concat([settingsBuffer, authorBuffer, iv, authTag, encrypted]);
-                fs.writeFileSync(filePath, encryptedData);
-
-                let keyBase64 = encryptKey.toString('base64');
-                keyBase64 = keyBase64.replace(/=+$/, ''); // Remove trailing '='
-
-                // Save key in database
-                const keysDatabase = new Databases(adminClient);
-
-                keysDatabase.createDocument(
-                    process.env.APPWRITE_DATABASE_ID,
-                    process.env.APPWRITE_KEYS_ID,
-                    ID.unique(),
-                    {
-                        file: `${user.$id}/${filename}`,
-                        encryptionKey: keyBase64,
-                        userId: user.$id
-                    });
-
-                const sockets = Array.from(connectedSockets.entries())
-                    .filter(([_, data]) => data.userId === user.$id)
-                    .map(([_, data]) => (data.socket));
-                sockets.forEach((socket) => {
-                    try {
-                        socket.emit('addImage');
-                    } catch (error) {
-                        console.error(error);
-                    }
-                });
-
-                res.json({
-                    filename: filename,
-                    key: keyBase64,
-                    url: `${req.protocol}://${req.get('host')}/f/${user.$id}/${filename}?c=${encodeURIComponent(keyBase64)}`
-                });
-            }
-            catch (error) {
-                return res.status(500).send("Error compressing file: " + error.message);
-            }
-        });
+        uploadImage(user.$id, user.name, file, res);
     }
     catch (error) {
         console.error("Error in file upload:", error);
         res.status(500).send(error.message);
     }
 });
+
+async function uploadImage(userId, username, file, res) {
+    const filename = uuid.v4() + ".jpg";
+    const uploadFolder = path.join(__dirname, "uploads", userId);
+    const uploadPath = path.join(uploadFolder, filename);
+
+    // If directory doesnt exist create it
+    if (!fs.existsSync(uploadFolder)) {
+        fs.mkdirSync(uploadFolder);
+    }
+
+    // Move the file to uploads folder
+    file.mv(uploadPath, async (err) => {
+        if (err) {
+            return res.status(500).send(err);
+        }
+        try {
+            console.log("Before compressing: ", new Date());
+            const filePath = await compress(file.data, uploadPath);
+            console.log("After compressing: ", new Date());
+
+            console.log("Before emcrypting: ", new Date());
+            const encryptKey = crypto.randomBytes(16); // 16 bytes for AES-128
+            const iv = crypto.randomBytes(12); // 12 bytes for GCM
+
+            // Encrypt the compressed file using AES-128-GCM
+            const compressedBuffer = fs.readFileSync(filePath);
+            const cipher = crypto.createCipheriv('aes-128-gcm', encryptKey, iv);
+            const encrypted = Buffer.concat([cipher.update(compressedBuffer), cipher.final()]);
+            const authTag = cipher.getAuthTag();
+
+            // Settings
+            const expire = req.query.expire ? 1 : 0;
+            const limitedTime = req.query.limitedTime ? 1 : 0;
+
+            const settingsBuffer = Buffer.alloc(settingsBufferSize);
+            settingsBuffer[0] = expire;
+            settingsBuffer[1] = limitedTime;
+
+            // Store timestamp (8 bytes) at offset 2
+            const uploadTime = BigInt(Date.now());
+            settingsBuffer.writeBigUInt64BE(uploadTime, 2);
+
+            // Author info
+            const authorBuffer = Buffer.alloc(authorBufferSize);
+            const author = `(${userId}) ${username}`;
+            const authorBytes = Buffer.from(author, 'utf8');
+            authorBytes.copy(authorBuffer, 0, 0, Math.min(authorBytes.length, authorBufferSize));
+            
+            // The rest remain zero
+            const encryptedData = Buffer.concat([settingsBuffer, authorBuffer, iv, authTag, encrypted]);
+            fs.writeFileSync(filePath, encryptedData);
+            console.log("After encrypting: ", new Date());
+
+            let imageKeyBase64 = encryptKey.toString('base64');
+            imageKeyBase64 = imageKeyBase64.replace(/=+$/, ''); // Remove trailing '='
+
+            // Save key in database
+            const keysDatabase = new Databases(adminClient);
+
+            console.log("Before creating doc: ", new Date());
+            keysDatabase.createDocument(
+                process.env.APPWRITE_DATABASE_ID,
+                process.env.APPWRITE_KEYS_ID,
+                ID.unique(),
+                {
+                    file: `${userId}/${filename}`,
+                    encryptionKey: imageKeyBase64,
+                    userId: userId
+                });
+            console.log("After creating doc: ", new Date());
+
+            console.log("Before socket response: ", new Date());
+            const sockets = Array.from(connectedSockets.entries())
+                .filter(([_, data]) => data.userId === userId)
+                .map(([_, data]) => (data.socket));
+            sockets.forEach((socket) => {
+                try {
+                    socket.emit('addImage');
+                } catch (error) {
+                    console.error(error);
+                }
+            });
+            console.log("After socket response: ", new Date());
+
+            res.json({
+                filename: filename,
+                key: imageKeyBase64,
+                url: `${req.protocol}://${req.get('host')}/f/${userId}/${filename}?c=${encodeURIComponent(imageKeyBase64)}`
+            });
+        }
+        catch (error) {
+            return res.status(500).send("Error compressing file: " + error.message);
+        }
+    });
+}
 
 // Read a file
 app.get('/f/:filename', (req, res) => {
