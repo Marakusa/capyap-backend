@@ -596,7 +596,7 @@ async function compress(fileBuffer, filePath) {
     try {
         await sharp(fileBuffer)
             .resize({ height: 2160, withoutEnlargement: true }) // Resize to a maximum width of 800px
-            .jpeg({ quality: 75 }) // Set JPEG quality to 80%
+            .jpeg({ quality: 85 }) // Set JPEG quality to 85%
             .toFile(filePath);
         return filePath;
     } catch (error) {
