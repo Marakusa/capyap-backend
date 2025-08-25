@@ -356,6 +356,7 @@ app.post('/f/delete', async (req, res) => {
 // Upload a file (directLink)
 app.post('/f/u', async (req, res) => {
     try {
+            console.log("==");
         const query = req.query;
 
         if (!query["k"]) {
@@ -363,6 +364,7 @@ app.post('/f/u', async (req, res) => {
         }
 
         // Fetch key data
+            console.log("Before fetching key: ", new Date());
         const uploadKeysDatabase = new Databases(adminClient);
         const uploadKeys = await uploadKeysDatabase.listDocuments(
             process.env.APPWRITE_DATABASE_ID,
@@ -374,6 +376,7 @@ app.post('/f/u', async (req, res) => {
         if (uploadKeys.documents.length <= 0) {
             return res.status(500).send("Failed to verify upload key. Please try to log in again.");
         }
+            console.log("After fetching key: ", new Date());
 
         const userId = uploadKeys.documents[0].userId;
         const username = uploadKeys.documents[0].username;
