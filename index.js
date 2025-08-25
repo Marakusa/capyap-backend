@@ -383,7 +383,7 @@ app.post('/f/u', async (req, res) => {
         }
 
         let file = req.files.file;
-        await uploadImage(userId, username, file, res);
+        await uploadImage(userId, username, file, req ,res);
     }
     catch (error) {
         console.error("Error in file upload:", error);
@@ -417,7 +417,7 @@ app.post('/f/upload', async (req, res) => {
         }
 
         let file = req.files.file;
-        uploadImage(user.$id, user.name, file, res);
+        uploadImage(user.$id, user.name, file, req ,res);
     }
     catch (error) {
         console.error("Error in file upload:", error);
@@ -425,7 +425,7 @@ app.post('/f/upload', async (req, res) => {
     }
 });
 
-async function uploadImage(userId, username, file, res) {
+async function uploadImage(userId, username, file, req ,res) {
     const filename = uuid.v4() + ".jpg";
     const uploadFolder = path.join(__dirname, "uploads", userId);
     const uploadPath = path.join(uploadFolder, filename);
