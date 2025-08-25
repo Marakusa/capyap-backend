@@ -17,6 +17,7 @@
     "node-appwrite": "^15.0.1",
     "node-encryption": "^2.0.1",
     "sharp": "^0.34.3",
+    "socket.io": "^4.8.1",
     "uuid": "^11.1.0"
   }
 }

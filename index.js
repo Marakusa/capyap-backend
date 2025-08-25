@@ -8,6 +8,7 @@ const uuid = require("uuid");
 const sharp = require('sharp');
 const crypto = require('crypto');
 const { Client, Account, OAuthProvider, Databases, ID, Query, Users } = require('node-appwrite');
+const { Server } = require('socket.io');
 
 const adminClient = new Client()
     .setEndpoint(process.env.APPWRITE_ENDPOINT)
@@ -18,6 +19,58 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 const PORT = process.env.PORT || 3000;
+
+const server = app.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT}`);
+});
+
+var io;
+
+if (process.env.ENV === "dev") {
+    io = new Server(server, {
+        cors: {
+            origin: 'http://localhost:5891'
+        }
+    });
+} else {
+    io = new Server(server);
+}
+
+const connectedSockets = new Map();
+
+io.on('connection', (socket) => {
+    connectedSockets.set(socket.id, {
+        socket: socket,
+        userId: null
+    });
+
+    let userId;
+    socket.on('userLogin', async (jwtToken) => {
+        if (!jwtToken) {
+            return;
+        }
+
+        const userClient = new Client()
+            .setEndpoint(process.env.APPWRITE_ENDPOINT)
+            .setProject(process.env.APPWRITE_PROJECT_ID)
+            .setJWT(jwtToken);
+
+        const account = new Account(userClient);
+
+        const user = await account.get();
+        if (!user) {
+            return;
+        }
+        userId = user.$id;
+        connectedSockets.set(socket.id, {
+            socket: socket,
+            userId: userId
+        });
+    });
+    socket.on('disconnect', () => {
+        connectedSockets.delete(socket.id);
+    });
+});
 
 const settingsBufferSize = 32; // 32 bytes for settings
 const authorBufferSize = 128; // 128 bytes for settings
@@ -394,6 +447,17 @@ app.post('/f/u', async (req, res) => {
                         userId: userId
                     });
 
+                const sockets = Array.from(connectedSockets.entries())
+                    .filter(([_, data]) => data.userId === userId)
+                    .map(([_, data]) => (data.socket));
+                sockets.forEach((socket) => {
+                    try {
+                        socket.emit('addImage');
+                    } catch (error) {
+                        console.error(error);
+                    }
+                });
+
                 res.json({
                     filename: filename,
                     key: imageKeyBase64,
@@ -501,6 +565,17 @@ app.post('/f/upload', async (req, res) => {
                         userId: user.$id
                     });
 
+                const sockets = Array.from(connectedSockets.entries())
+                    .filter(([_, data]) => data.userId === user.$id)
+                    .map(([_, data]) => (data.socket));
+                sockets.forEach((socket) => {
+                    try {
+                        socket.emit('addImage');
+                    } catch (error) {
+                        console.error(error);
+                    }
+                });
+
                 res.json({
                     filename: filename,
                     key: keyBase64,
@@ -605,7 +680,3 @@ async function compress(fileBuffer, filePath) {
         throw error;
     }
 }
-
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-});
