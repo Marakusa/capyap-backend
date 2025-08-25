@@ -284,7 +284,7 @@ app.post('/f/fetchGallery', async (req, res) => {
         
         for (let picture of pictures.documents) {
             const key = picture.encryptionKey;
-            output.push(`${req.protocol}://${req.get('host')}/f/${picture.file}?c=${encodeURIComponent(key)}`);
+            output.push(`${req.get('host').includes("localhost") ? "http" : "https"}://${req.get('host')}/f/${picture.file}?c=${encodeURIComponent(key)}`);
         }
         res.json(output);
     }
