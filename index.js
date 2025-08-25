@@ -508,7 +508,7 @@ async function uploadImage(userId, username, file, req ,res) {
             res.json({
                 filename: filename,
                 key: imageKeyBase64,
-                url: `${req.protocol}://${req.get('host')}/f/${userId}/${filename}?c=${encodeURIComponent(imageKeyBase64)}`
+                url: `${req.get('host').includes("localhost") ? "http" : "https"}://${req.get('host')}/f/${userId}/${filename}?c=${encodeURIComponent(imageKeyBase64)}`
             });
         }
         catch (error) {
