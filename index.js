@@ -89,12 +89,14 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 app.get('/oauth', async (req, res) => {
+    const isDesktop = req.query["desktop"] != null;
+
     const account = new Account(adminClient);
 
     const redirectUrl = await account.createOAuth2Token(
         OAuthProvider.Discord,
-        process.env.APPWRITE_REDIRECT_URI,
-        process.env.APPWRITE_REDIRECT_URI_ERROR
+        !isDesktop ? process.env.APPWRITE_REDIRECT_URI : process.env.APPWRITE_REDIRECT_URI_DESKTOP,
+        !isDesktop ? process.env.APPWRITE_REDIRECT_URI_ERROR : process.env.APPWRITE_REDIRECT_URI_ERROR_DESKTOP
     );
 
     res.redirect(redirectUrl);
