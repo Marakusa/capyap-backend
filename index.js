@@ -234,9 +234,15 @@ app.post('/f/fetchGallery', async (req, res) => {
     try {
         const data = req.body;
         const fetchFrom = req.query["from"];
+        const page = req.query["page"];
+        const limit = req.query["limit"];
 
         if (!data || !data.sessionKey) {
             return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        if (limit > 100) {
+            return res.status(400).send("Page limit cannot be higher than 100.");
         }
 
         const userClient = new Client()
@@ -265,6 +271,16 @@ app.post('/f/fetchGallery', async (req, res) => {
                     Query.orderDesc('\$createdAt'),
                     Query.greaterThan('\$createdAt', fetchFrom)
                 ]);
+        } else if (page != null) {
+            pictures = await keysDatabase.listDocuments(
+                process.env.APPWRITE_DATABASE_ID,
+                process.env.APPWRITE_KEYS_ID,
+                [
+                    Query.equal('userId', user.$id),
+                    Query.orderDesc('\$createdAt'),
+                    Query.limit(limit ?? 25),
+                    Query.offset((page - 1) * (limit ?? 25))
+                ]);
         } else {
             pictures = await keysDatabase.listDocuments(
                 process.env.APPWRITE_DATABASE_ID,
@@ -272,6 +288,8 @@ app.post('/f/fetchGallery', async (req, res) => {
                 [
                     Query.equal('userId', user.$id),
                     Query.orderDesc('\$createdAt'),
+                    Query.limit(25),
+                    Query.offset(0)
                 ]);
         }
         
@@ -288,7 +306,13 @@ app.post('/f/fetchGallery', async (req, res) => {
             const key = picture.encryptionKey;
             output.push(`${req.get('host').includes("localhost") ? "http" : "https"}://${req.get('host')}/f/${picture.file}?c=${encodeURIComponent(key)}`);
         }
-        res.json(output);
+        res.json({
+            total: pictures.total,
+            limit: limit ?? 25,
+            page: page ?? 1,
+            totalPages: Math.ceil(pictures.total / (limit ?? 25)),
+            documents: output
+        });
     }
     catch (error) {
         console.error("Error in file upload:", error);
