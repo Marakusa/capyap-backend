@@ -100,7 +100,7 @@ app.get('/oauth', async (req, res) => {
         !isDesktop ? process.env.APPWRITE_REDIRECT_URI_ERROR : process.env.APPWRITE_REDIRECT_URI_ERROR_DESKTOP
     );
 
-    res.redirect(redirectUrl);
+    res.redirect(redirectUrl + "&prompt=none");
 });
 
 app.get('/oauth/success', async (req, res) => {
