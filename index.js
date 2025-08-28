@@ -4,6 +4,7 @@ const cors = require('cors');
 const fileUpload = require("express-fileupload");
 const path = require("path");
 const fs = require("fs");
+const { readdir, stat } = require('fs/promises');
 const uuid = require("uuid");
 const sharp = require('sharp');
 const crypto = require('crypto');
@@ -228,6 +229,107 @@ app.post('/user/delete', async (req, res) => {
         res.status(500).send(error.message);
     }
 });
+
+function humanFileSize(bytes, si = true, dp = 1) {
+    const thresh = si ? 1000 : 1024;
+
+    if (Math.abs(bytes) < thresh) {
+        return bytes + ' B';
+    }
+
+    const units = si 
+        ? ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'] 
+        : ['KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB', 'ZiB', 'YiB'];
+    let u = -1;
+    const r = 10**dp;
+
+    do {
+        bytes /= thresh;
+        ++u;
+    } while (Math.round(Math.abs(bytes) * r) / r >= thresh && u < units.length - 1);
+
+
+    return bytes.toFixed(dp) + ' ' + units[u];
+}
+
+// Fetch statistics
+app.post('/f/all/stats', async (req, res) => {
+    try {
+        const data = req.body;
+
+        if (!data || !data.sessionKey) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        const userClient = new Client()
+            .setEndpoint(process.env.APPWRITE_ENDPOINT)
+            .setProject(process.env.APPWRITE_PROJECT_ID)
+            .setJWT(data.sessionKey);
+
+        const account = new Account(userClient);
+
+        const user = await account.get();
+        if (!user) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        // Save key in database
+        const keysDatabase = new Databases(adminClient);
+
+        let pictures = await keysDatabase.listDocuments(
+            process.env.APPWRITE_DATABASE_ID,
+            process.env.APPWRITE_KEYS_ID,
+            [
+                Query.equal('userId', user.$id),
+                Query.select(['views']),
+                Query.limit(9999999)
+            ]);
+
+        var date7DaysAgo = new Date();
+        date7DaysAgo.setDate(new Date().getDate() - 7);
+        let picturesLast7Days = await keysDatabase.listDocuments(
+            process.env.APPWRITE_DATABASE_ID,
+            process.env.APPWRITE_KEYS_ID,
+            [
+                Query.equal('userId', user.$id),
+                Query.select(['views']),
+                Query.greaterThan('\$createdAt', date7DaysAgo.toISOString()),
+                Query.limit(9999999)
+            ]);
+        
+        const uploadFolder = path.join(__dirname, "uploads", user.$id);
+
+        // If directory doesnt exist create it
+        if (!fs.existsSync(uploadFolder)) {
+            fs.mkdirSync(uploadFolder);
+        }
+        
+        let allSize = await dirSize(uploadFolder);
+
+        let totalViews = 0;
+        for (let i = 0; i < pictures.documents.length; i++) {
+            totalViews += pictures.documents[i].views ?? 0;
+        }
+        
+        res.json({
+            spaceUsed: humanFileSize(allSize, true),
+            views: totalViews,
+            files7Days: picturesLast7Days.documents.length,
+            totalFiles: pictures.total
+        });
+    }
+    catch (error) {
+        console.error("Error in file upload:", error);
+        res.status(500).send(error.message);
+    }
+});
+
+const dirSize = async directory => {
+  const files = await readdir( directory );
+  const stats = files.map( file => stat( path.join( directory, file ) ) );
+
+  return ( await Promise.all( stats ) ).reduce( ( accumulator, { size } ) => accumulator + size, 0 );
+};
 
 // Fetch gallery
 app.post('/f/fetchGallery', async (req, res) => {
@@ -544,18 +646,38 @@ async function uploadImage(userId, username, file, req ,res) {
 }
 
 // Read a file
-app.get('/f/:filename', (req, res) => {
+app.get('/f/:filename', async (req, res) => {
     const filename = req.params.filename;
-    handleReadFile(req, res, filename);
+    await handleReadFile(req, res, filename);
 });
 
 // Read a file
-app.get('/f/:userId/:filename', (req, res) => {
+app.get('/f/:userId/:filename', async (req, res) => {
     const filename = req.params.userId + "/" + req.params.filename;
-    handleReadFile(req, res, filename);
+    await handleReadFile(req, res, filename);
+        
+    // Save key in database
+    const keysDatabase = new Databases(adminClient);
+
+    let files = await keysDatabase.listDocuments(
+        process.env.APPWRITE_DATABASE_ID,
+        process.env.APPWRITE_KEYS_ID,
+        [
+            Query.equal('file', filename)
+        ]);
+    let fileId = files.documents[0].$id;
+    let views = files.documents[0].views ?? 0;
+    views++;
+    await keysDatabase.updateDocument(
+        process.env.APPWRITE_DATABASE_ID,
+        process.env.APPWRITE_KEYS_ID,
+        fileId,
+        {
+            views
+        });
 });
 
-function handleReadFile(req, res, filename) {
+async function handleReadFile(req, res, filename) {
     const filePath = path.join(uploadDir, filename);
 
     if (!filename.endsWith(".jpg") || !fs.existsSync(filePath)) {
