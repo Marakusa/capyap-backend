@@ -655,30 +655,11 @@ app.get('/f/:filename', async (req, res) => {
 app.get('/f/:userId/:filename', async (req, res) => {
     const filename = req.params.userId + "/" + req.params.filename;
     await handleReadFile(req, res, filename);
-        
-    // Save key in database
-    const keysDatabase = new Databases(adminClient);
-
-    let files = await keysDatabase.listDocuments(
-        process.env.APPWRITE_DATABASE_ID,
-        process.env.APPWRITE_KEYS_ID,
-        [
-            Query.equal('file', filename)
-        ]);
-    let fileId = files.documents[0].$id;
-    let views = files.documents[0].views ?? 0;
-    views++;
-    await keysDatabase.updateDocument(
-        process.env.APPWRITE_DATABASE_ID,
-        process.env.APPWRITE_KEYS_ID,
-        fileId,
-        {
-            views
-        });
 });
 
 async function handleReadFile(req, res, filename) {
     const filePath = path.join(uploadDir, filename);
+    const noView = req.query["noView"];
 
     if (!filename.endsWith(".jpg") || !fs.existsSync(filePath)) {
         res.setHeader('Cache-Control', 'no-store');
@@ -713,6 +694,30 @@ async function handleReadFile(req, res, filename) {
 
         res.setHeader('Content-Type', 'image/jpeg');
         res.send(decryptedData.data);
+        
+        if (noView) {
+            return;
+        }
+
+        // Save key in database
+        const keysDatabase = new Databases(adminClient);
+
+        let files = await keysDatabase.listDocuments(
+            process.env.APPWRITE_DATABASE_ID,
+            process.env.APPWRITE_KEYS_ID,
+            [
+                Query.equal('file', filename)
+            ]);
+        let fileId = files.documents[0].$id;
+        let views = files.documents[0].views ?? 0;
+        views++;
+        await keysDatabase.updateDocument(
+            process.env.APPWRITE_DATABASE_ID,
+            process.env.APPWRITE_KEYS_ID,
+            fileId,
+            {
+                views
+            });
     } catch (error) {
         console.error("Error reading file:", error);
         const notFoundFileBuffer = fs.readFileSync("404.jpg");
