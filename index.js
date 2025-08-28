@@ -532,6 +532,7 @@ app.post('/f/upload', async (req, res) => {
             return res.status(403).send("Unauthorized, please try to log in again.");
         }
 
+        console.log(data.sessionKey);
         const userClient = new Client()
             .setEndpoint(process.env.APPWRITE_ENDPOINT)
             .setProject(process.env.APPWRITE_PROJECT_ID)
