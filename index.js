@@ -630,7 +630,7 @@ async function uploadImage(userId, username, file, req, res) {
     }
 
     // Filename and extension
-    const filename = uuid.v4() + ".jpg";
+    const filename = uuid.v4() + "." + (type.ext === "gif" ? "gif" : "jpg");
     const uploadFolder = safeJoin(process.env.UPLOADS_FOLDER, userId);
     const uploadPath = safeJoin(uploadFolder, filename);
 
@@ -639,10 +639,17 @@ async function uploadImage(userId, username, file, req, res) {
     }
 
     // Compress image
-    await sharp(file.data)
-        .resize({ height: 2160, width: 2160, fit: "inside", withoutEnlargement: true })
-        .jpeg({ quality: 92 })
-        .toFile(uploadPath);
+    if (type.ext === "gif") {
+        await sharp(file.data)
+            .resize({ height: 256, width: 256, fit: "inside", withoutEnlargement: true })
+            .gif({ quality: 50, effort: 7, colors: 128, dither: 1, reoptimise: true, loop: 1 })
+            .toFile(uploadPath);
+    } else {
+        await sharp(file.data)
+            .resize({ height: 2160, width: 2160, fit: "inside", withoutEnlargement: true })
+            .jpeg({ quality: 92 })
+            .toFile(uploadPath);
+    }
 
     // Encrypt compressed file
     const encryptKey = crypto.randomBytes(16); // AES-128
