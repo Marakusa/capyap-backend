@@ -4,7 +4,6 @@ const cors = require('cors');
 const fileUpload = require("express-fileupload");
 const path = require("path");
 const fs = require("fs");
-const FileType = require("file-type");
 const { readdir, stat } = require('fs/promises');
 const uuid = require("uuid");
 const sharp = require('sharp');
@@ -595,7 +594,7 @@ async function uploadImage(userId, username, file, req, res) {
     }
 
     // Validate type from buffer
-    const type = await FileType.fromBuffer(file.data);
+    const type = await detectFileType(file.data);
 
     if (!type || !ALLOWED_EXTS.includes(type.ext)) {
         console.error("Invalid or unsupported file type: " + (type ? type.ext : "unknown"));
@@ -780,4 +779,9 @@ function decrypt(encryptedBuffer, keyBase64, res) {
         settings: settings,
         author: author
     };
+}
+
+async function detectFileType(buffer) {
+  const { fileTypeFromBuffer } = await import("file-type");
+  return fileTypeFromBuffer(buffer);
 }
