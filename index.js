@@ -604,8 +604,10 @@ async function uploadImage(userId, username, file, req, res) {
 
     // Validate type from buffer
     const type = await FileType.fromBuffer(file.data);
+
     if (!type || !ALLOWED_EXTS.includes(type.ext)) {
-      return res.status(400).send("Invalid or unsupported file type.");
+        console.error("Invalid or unsupported file type: " + (type ? type.ext : "unknown"));
+        return res.status(400).send("Invalid or unsupported file type.");
     }
 
     // Filename and extension
