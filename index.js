@@ -578,15 +578,7 @@ app.post('/f/upload', async (req, res) => {
         if (file.size > MAX_FILE_SIZE) {
             return res.status(400).send("File too large.");
         }
-
-        let type = null;
-        try {
-            type = await validateFile(file);
-        } catch (err) {
-            console.error("File type:", type);
-            return res.status(400).send("Invalid file type.");
-        }
-
+        
         uploadImage(user.$id, user.name, file, req ,res);
     }
     catch (error) {
@@ -788,15 +780,4 @@ function decrypt(encryptedBuffer, keyBase64, res) {
         settings: settings,
         author: author
     };
-}
-
-async function validateFile(file) {
-  const type = await FileType.fromBuffer(file.data);
-
-  if (!type || !ALLOWED_EXTS.includes(type.ext)) {
-    console.error("Invalid or unsupported file type: " + (type ? type.ext : "unknown"));
-    throw new Error("Invalid or unsupported file type: " + (type ? type.ext : "unknown"));
-  }
-
-  return type;
 }
