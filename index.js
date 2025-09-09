@@ -726,7 +726,7 @@ async function handleReadFile(req, res, filename) {
     const filePath = safeJoin(uploadDir, filename);
     const noView = req.query["noView"];
 
-    if (!filename.endsWith(".jpg") || !fs.existsSync(filePath)) {
+    if (!filename.endsWith(".jpg") || !filename.endsWith(".gif") || !fs.existsSync(filePath)) {
         res.setHeader('Cache-Control', 'no-store');
         const notFoundFileBuffer = fs.readFileSync("404.jpg");
         res.setHeader('Content-Type', 'image/jpeg');
@@ -758,7 +758,11 @@ async function handleReadFile(req, res, filename) {
             }
         }
 
-        res.setHeader('Content-Type', 'image/jpeg');
+        if (filename.endsWith(".gif")) {
+            res.setHeader('Content-Type', 'image/gif');
+        } else {
+            res.setHeader('Content-Type', 'image/jpeg');
+        }
         res.send(decryptedData.data);
         
         if (noView) {
