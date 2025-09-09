@@ -10,6 +10,7 @@ const sharp = require('sharp');
 const crypto = require('crypto');
 const { Client, Account, OAuthProvider, Databases, ID, Query, Users } = require('node-appwrite');
 const { Server } = require('socket.io');
+import { rateLimit } from 'express-rate-limit';
 
 const adminClient = new Client()
     .setEndpoint(process.env.APPWRITE_ENDPOINT)
@@ -85,6 +86,21 @@ const ALLOWED_EXTS = ["jpg", "jpeg", "png", "gif"];
 
 const settingsBufferSize = 32; // 32 bytes for settings
 const authorBufferSize = 128; // 128 bytes for settings
+
+// Middleware to limit repeated requests to public APIs and/or endpoints
+const limiter = rateLimit({
+	windowMs: 60 * 1000, // 1 minute
+	limit: 30, // Limit each IP to 100 requests per `window` (here, per a minute).
+	standardHeaders: 'draft-8', // draft-6: `RateLimit-*` headers; draft-7 & draft-8: combined `RateLimit` header
+	legacyHeaders: false, // Disable the `X-RateLimit-*` headers.
+	ipv6Subnet: 58, // Set to 60 or 64 to be less aggressive, or 52 or 48 to be more aggressive
+});
+app.use((req, res, next) => {
+    if (req.path.startsWith('/f/u') || req.path.startsWith('/f/upload')) {
+        return next(); // skip global limiter for uploads
+    }
+    limiter(req, res, next);
+});
 
 // Middleware to handle file uploads
 app.use(fileUpload());
@@ -497,8 +513,14 @@ app.post('/f/delete', async (req, res) => {
     }
 });
 
+// Upload limiter
+const uploadLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 7, // max 7 uploads per minute per IP
+    message: "Too many uploads, try later."
+});
 // Upload a file (directLink)
-app.post('/f/u', async (req, res) => {
+app.post('/f/u', uploadLimiter, async (req, res) => {
     try {
         const query = req.query;
 
@@ -554,7 +576,7 @@ app.post('/f/u', async (req, res) => {
 });
 
 // Upload a file
-app.post('/f/upload', async (req, res) => {
+app.post('/f/upload', uploadLimiter, async (req, res) => {
     try {
         const data = req.body;
 
@@ -646,7 +668,7 @@ async function uploadImage(userId, username, file, req, res) {
 
     // Write encrypted file
     const encryptedData = Buffer.concat([settingsBuffer, authorBuffer, iv, authTag, encrypted]);
-    fs.writeFileSync(uploadPath, encryptedData);
+    await fs.promises.writeFile(uploadPath, encryptedData);
 
     // Save encryption key
     let imageKeyBase64 = encryptKey.toString("base64").replace(/=+$/, "");
@@ -682,7 +704,7 @@ async function uploadImage(userId, username, file, req, res) {
       url: `${req.get("host").includes("localhost") ? "http" : "https"}://${req.get("host")}/f/${userId}/${filename}?c=${encodeURIComponent(imageKeyBase64)}`
     });
   } catch (error) {
-    console.error("Upload failed:", error);
+    console.error("Upload failed for userId:", userId, error.message);
     return res.status(500).send("Error uploading file.");
   }
 }
@@ -705,8 +727,9 @@ async function handleReadFile(req, res, filename) {
     }
     
     try {
+        const key = req.query.c || req.headers['x-file-key'];
         const fileBuffer = fs.readFileSync(filePath);
-        const decryptedData = decrypt(fileBuffer, req.query.c, res);
+        const decryptedData = decrypt(fileBuffer, key, res);
 
         const settings = decryptedData.settings;
         const limitedTime = settings[1];
@@ -720,7 +743,7 @@ async function handleReadFile(req, res, filename) {
             if (fileAge > 10000) { // 10 seconds
                 // Remove the image data from the file but keep the settings
                 const newFileBuffer = Buffer.concat([decryptedData.settings, decryptedData.author]);
-                fs.writeFileSync(filePath, newFileBuffer);
+                await fs.promises.writeFile(filePath, newFileBuffer);
 
                 const expiredFileBuffer = fs.readFileSync("expired.jpg");
                 res.setHeader('Content-Type', 'image/jpeg');
@@ -765,33 +788,43 @@ async function handleReadFile(req, res, filename) {
 // Decrypt file encrypted with AES-128-GCM (iv + authTag + encrypted)
 function decrypt(encryptedBuffer, keyBase64, res) {
     if (!keyBase64) throw new Error("Missing decryption key");
+
     const key = Buffer.from(keyBase64, 'base64');
-    const settings = encryptedBuffer.slice(0, settingsBufferSize);
-    const author = encryptedBuffer.slice(settingsBufferSize, settingsBufferSize + authorBufferSize);
-    const iv = encryptedBuffer.slice(0 + settingsBufferSize + authorBufferSize, 12 + settingsBufferSize + authorBufferSize);
-    const authTag = encryptedBuffer.slice(12 + settingsBufferSize + authorBufferSize, 28 + settingsBufferSize + authorBufferSize);
-    const encrypted = encryptedBuffer.slice(28 + settingsBufferSize + authorBufferSize);
-    const decipher = crypto.createDecipheriv('aes-128-gcm', key, iv);
-    decipher.setAuthTag(authTag);
-    return {
-        data: Buffer.concat([decipher.update(encrypted), decipher.final()]),
-        settings: settings,
-        author: author
-    };
+    if (key.length !== 16) throw new Error("Invalid key length");
+
+    try {
+        const settings = encryptedBuffer.slice(0, settingsBufferSize);
+        const author = encryptedBuffer.slice(settingsBufferSize, settingsBufferSize + authorBufferSize);
+        const iv = encryptedBuffer.slice(settingsBufferSize + authorBufferSize, 12 + settingsBufferSize + authorBufferSize);
+        const authTag = encryptedBuffer.slice(12 + settingsBufferSize + authorBufferSize, 28 + settingsBufferSize + authorBufferSize);
+        const encrypted = encryptedBuffer.slice(28 + settingsBufferSize + authorBufferSize);
+
+        const decipher = crypto.createDecipheriv('aes-128-gcm', key, iv);
+        decipher.setAuthTag(authTag);
+
+        return {
+            data: Buffer.concat([decipher.update(encrypted), decipher.final()]),
+            settings,
+            author
+        };
+    } catch {
+        throw new Error("Decryption failed");
+    }
 }
 
 async function detectFileType(buffer) {
-  const { fileTypeFromBuffer } = await import("file-type");
-  return fileTypeFromBuffer(buffer);
+    const { fileTypeFromBuffer } = await import("file-type");
+    return fileTypeFromBuffer(buffer);
 }
 
 function safeJoin(base, target) {
-  const targetPath = path.normalize(path.join(base, target));
+    const resolvedBase = path.resolve(base);
+    const resolvedTarget = path.resolve(resolvedBase, target);
 
-  // Ensure target stays inside base
-  if (!targetPath.startsWith(base)) {
-    throw new Error("Invalid path.");
-  }
+    // Allow exact match or subpath
+    if (!resolvedTarget.startsWith(resolvedBase + path.sep) && resolvedTarget !== resolvedBase) {
+        throw new Error("Invalid path.");
+    }
 
-  return targetPath;
+    return resolvedTarget;
 }
