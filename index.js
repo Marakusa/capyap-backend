@@ -96,7 +96,7 @@ const limiter = rateLimit({
 	ipv6Subnet: 58, // Set to 60 or 64 to be less aggressive, or 52 or 48 to be more aggressive
 });
 app.use((req, res, next) => {
-    if (req.path.startsWith('/f/u') || req.path.startsWith('/f/upload')) {
+    if (req.path.startsWith('/f/') || req.path.startsWith('/f/u') || req.path.startsWith('/f/upload')) {
         return next(); // skip global limiter for uploads
     }
     limiter(req, res, next);
