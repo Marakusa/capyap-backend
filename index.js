@@ -177,7 +177,7 @@ app.post('/user/getUploadKey', async (req, res) => {
         });
     } catch (error) {
         console.error("Error when fetching upload key:", error);
-        res.status(500).send(error.message);
+        res.status(500).send("Error while fetching upload key.");
     }
 });
 
@@ -233,7 +233,7 @@ app.post('/user/delete', async (req, res) => {
     }
     catch (error) {
         console.error("Error in file deletion:", error);
-        res.status(500).send(error.message);
+        res.status(500).send("Failed to delete account.");
     }
 });
 
@@ -326,8 +326,8 @@ app.post('/f/all/stats', async (req, res) => {
         });
     }
     catch (error) {
-        console.error("Error in file upload:", error);
-        res.status(500).send(error.message);
+        console.error("Error in fetching statistics:", error);
+        res.status(500).send("Failed to fetch statistics.");
     }
 });
 
@@ -424,8 +424,8 @@ app.post('/f/fetchGallery', async (req, res) => {
         });
     }
     catch (error) {
-        console.error("Error in file upload:", error);
-        res.status(500).send(error.message);
+        console.error("Error in fetching gallery:", error);
+        res.status(500).send("Failed to fetch gallery.");
     }
 });
 
@@ -480,18 +480,20 @@ app.post('/f/delete', async (req, res) => {
             }
 
             // Delete file
-            await fs.promises.rm(filePath);
+            if (fs.existsSync(filePath)) {
+                await fs.promises.rm(filePath);
+            }
             
             res.json({success: true});
         }
         catch (error) {
-            console.error("Error deleting files: " + error.message);
-            res.status(500).send("Failed to delete file");
+            console.error("Error deleting files:", error);
+            res.status(500).send("Failed to delete file.");
         }
     }
     catch (error) {
         console.error("Error in file deletion:", error);
-        res.status(500).send("Failed to delete file");
+        res.status(500).send("Failed to delete file.");
     }
 });
 
@@ -547,7 +549,7 @@ app.post('/f/u', async (req, res) => {
     }
     catch (error) {
         console.error("Error in file upload:", error);
-        res.status(500).send("Failed to upload file!");
+        res.status(500).send("Failed to upload file.");
     }
 });
 
@@ -586,7 +588,7 @@ app.post('/f/upload', async (req, res) => {
     }
     catch (error) {
         console.error("Error in file upload:", error);
-        res.status(500).send(error.message);
+        res.status(500).send("Failed to upload file.");
     }
 });
 
