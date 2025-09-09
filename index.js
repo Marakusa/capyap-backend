@@ -454,41 +454,43 @@ app.post('/f/delete', async (req, res) => {
             return res.status(403).send("Unauthorized, please try to log in again.");
         }
 
-        const filePath = safeJoin(process.env.UPLOADS_FOLDER, data.file);
+        if (!/^[\w-]+\.(jpg|jpeg|png|gif)$/i.test(data.file)) {
+            return res.status(400).send("Invalid file name.");
+        }
+
+        const filePath = safeJoin(process.env.UPLOADS_FOLDER, user.$id + "/" + data.file);
 
         // Delete file
-        fs.rm(filePath, async (err, files) => {
-            if (err) {
-                return res.status(500).send(err);
-            }
-            try {
-                // Remove key in database
-                const keysDatabase = new Databases(adminClient);
+        await fs.promises.rm(filePath);
+        
+        try {
+            // Remove key in database
+            const keysDatabase = new Databases(adminClient);
 
-                let fileKeys = await keysDatabase.listDocuments(
+            let fileKeys = await keysDatabase.listDocuments(
+                process.env.APPWRITE_DATABASE_ID,
+                process.env.APPWRITE_KEYS_ID,
+                [
+                    Query.equal('file', data.file),
+                    Query.equal('userId', user.$id)
+                ]);
+            
+            for (let f of fileKeys.documents) {
+                await keysDatabase.deleteDocument(
                     process.env.APPWRITE_DATABASE_ID,
                     process.env.APPWRITE_KEYS_ID,
-                    [
-                        Query.equal('file', data.file),
-                        Query.equal('userId', user.$id)
-                    ]);
-                
-                for (let f of fileKeys.documents) {
-                    await keysDatabase.deleteDocument(
-                        process.env.APPWRITE_DATABASE_ID,
-                        process.env.APPWRITE_KEYS_ID,
-                        f.$id);
-                }
-                res.json({success: true});
+                    f.$id);
             }
-            catch (error) {
-                return res.status(500).send("Error deleting files: " + error.message);
-            }
-        });
+            res.json({success: true});
+        }
+        catch (error) {
+            console.error("Error deleting files: " + error.message);
+            res.status(500).send("Failed to delete file");
+        }
     }
     catch (error) {
         console.error("Error in file deletion:", error);
-        res.status(500).send(error.message);
+        res.status(500).send("Failed to delete file");
     }
 });
 
@@ -603,7 +605,7 @@ async function uploadImage(userId, username, file, req, res) {
     }
 
     // Filename and extension
-    const filename = uuid.v4() + "." + type.ext;
+    const filename = uuid.v4() + ".jpg";
     const uploadFolder = safeJoin(process.env.UPLOADS_FOLDER, userId);
     const uploadPath = safeJoin(uploadFolder, filename);
 
@@ -613,7 +615,7 @@ async function uploadImage(userId, username, file, req, res) {
 
     // Compress image
     await sharp(file.data)
-        .resize({ height: 2160, withoutEnlargement: true })
+        .resize({ height: 2160, width: 2160, fit: "inside", withoutEnlargement: true })
         .jpeg({ quality: 92 })
         .toFile(uploadPath);
 
@@ -681,13 +683,6 @@ async function uploadImage(userId, username, file, req, res) {
     return res.status(500).send("Error uploading file.");
   }
 }
-
-
-// Read a file
-app.get('/f/:filename', async (req, res) => {
-    const filename = req.params.filename;
-    await handleReadFile(req, res, filename);
-});
 
 // Read a file
 app.get('/f/:userId/:filename', async (req, res) => {
