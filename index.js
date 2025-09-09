@@ -459,9 +459,6 @@ app.post('/f/delete', async (req, res) => {
         }
 
         const filePath = safeJoin(process.env.UPLOADS_FOLDER, user.$id + "/" + data.file);
-
-        // Delete file
-        await fs.promises.rm(filePath);
         
         try {
             // Remove key in database
@@ -471,7 +468,7 @@ app.post('/f/delete', async (req, res) => {
                 process.env.APPWRITE_DATABASE_ID,
                 process.env.APPWRITE_KEYS_ID,
                 [
-                    Query.equal('file', data.file),
+                    Query.equal('file', user.$id + "/" + data.file),
                     Query.equal('userId', user.$id)
                 ]);
             
@@ -481,6 +478,10 @@ app.post('/f/delete', async (req, res) => {
                     process.env.APPWRITE_KEYS_ID,
                     f.$id);
             }
+
+            // Delete file
+            await fs.promises.rm(filePath);
+            
             res.json({success: true});
         }
         catch (error) {
