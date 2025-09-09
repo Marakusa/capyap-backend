@@ -10,7 +10,7 @@ const sharp = require('sharp');
 const crypto = require('crypto');
 const { Client, Account, OAuthProvider, Databases, ID, Query, Users } = require('node-appwrite');
 const { Server } = require('socket.io');
-import { rateLimit } from 'express-rate-limit';
+const rateLimit = require('express-rate-limit');
 
 const adminClient = new Client()
     .setEndpoint(process.env.APPWRITE_ENDPOINT)
