@@ -90,7 +90,8 @@ const authorBufferSize = 128; // 128 bytes for settings
 app.use(fileUpload());
 
 // Ensure uploads folder exists
-const uploadDir = process.env.UPLOADS_FOLDER;
+const uploadDir = process.env.UPLOADS_FOLDER || path.join(__dirname, "uploads");
+
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true }); // creates folder if missing
 }
@@ -217,7 +218,7 @@ app.post('/user/delete', async (req, res) => {
             );
         }
 
-        const uploadFolder = path.join(process.env.UPLOADS_FOLDER, user.$id);
+        const uploadFolder = safeJoin(process.env.UPLOADS_FOLDER, user.$id);
         if (fs.existsSync(uploadFolder)) {
             fs.rmdirSync(uploadFolder, { recursive: true, force: true });
         }
@@ -303,7 +304,7 @@ app.post('/f/all/stats', async (req, res) => {
                 Query.limit(9999999)
             ]);
         
-        const uploadFolder = path.join(process.env.UPLOADS_FOLDER, user.$id);
+        const uploadFolder = safeJoin(process.env.UPLOADS_FOLDER, user.$id);
 
         // If directory doesnt exist create it
         if (!fs.existsSync(uploadFolder)) {
@@ -332,7 +333,7 @@ app.post('/f/all/stats', async (req, res) => {
 
 const dirSize = async directory => {
   const files = await readdir( directory );
-  const stats = files.map( file => stat( path.join( directory, file ) ) );
+  const stats = files.map( file => stat( safeJoin( directory, file ) ) );
 
   return ( await Promise.all( stats ) ).reduce( ( accumulator, { size } ) => accumulator + size, 0 );
 };
@@ -401,7 +402,7 @@ app.post('/f/fetchGallery', async (req, res) => {
                 ]);
         }
         
-        const uploadFolder = path.join(process.env.UPLOADS_FOLDER, user.$id);
+        const uploadFolder = safeJoin(process.env.UPLOADS_FOLDER, user.$id);
 
         // If directory doesnt exist create it
         if (!fs.existsSync(uploadFolder)) {
@@ -453,7 +454,7 @@ app.post('/f/delete', async (req, res) => {
             return res.status(403).send("Unauthorized, please try to log in again.");
         }
 
-        const filePath = path.join(process.env.UPLOADS_FOLDER, data.file);
+        const filePath = safeJoin(process.env.UPLOADS_FOLDER, data.file);
 
         // Delete file
         fs.rm(filePath, async (err, files) => {
@@ -603,8 +604,8 @@ async function uploadImage(userId, username, file, req, res) {
 
     // Filename and extension
     const filename = uuid.v4() + "." + type.ext;
-    const uploadFolder = path.join(process.env.UPLOADS_FOLDER, userId);
-    const uploadPath = path.join(uploadFolder, filename);
+    const uploadFolder = safeJoin(process.env.UPLOADS_FOLDER, userId);
+    const uploadPath = safeJoin(uploadFolder, filename);
 
     if (!fs.existsSync(uploadFolder)) {
       fs.mkdirSync(uploadFolder, { recursive: true });
@@ -695,7 +696,7 @@ app.get('/f/:userId/:filename', async (req, res) => {
 });
 
 async function handleReadFile(req, res, filename) {
-    const filePath = path.join(uploadDir, filename);
+    const filePath = safeJoin(uploadDir, filename);
     const noView = req.query["noView"];
 
     if (!filename.endsWith(".jpg") || !fs.existsSync(filePath)) {
@@ -784,4 +785,15 @@ function decrypt(encryptedBuffer, keyBase64, res) {
 async function detectFileType(buffer) {
   const { fileTypeFromBuffer } = await import("file-type");
   return fileTypeFromBuffer(buffer);
+}
+
+function safeJoin(base, target) {
+  const targetPath = path.normalize(path.join(base, target));
+
+  // Ensure target stays inside base
+  if (!targetPath.startsWith(base)) {
+    throw new Error("Invalid path.");
+  }
+
+  return targetPath;
 }
