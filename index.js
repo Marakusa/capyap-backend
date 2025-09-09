@@ -4,6 +4,7 @@ const cors = require('cors');
 const fileUpload = require("express-fileupload");
 const path = require("path");
 const fs = require("fs");
+const FileType = require("file-type");
 const { readdir, stat } = require('fs/promises');
 const uuid = require("uuid");
 const sharp = require('sharp');
@@ -77,6 +78,12 @@ io.on('connection', (socket) => {
     });
 });
 
+// Max allowed file size
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+// Allowed extensions
+const ALLOWED_EXTS = ["jpg", "jpeg", "png", "gif"];
+
 const settingsBufferSize = 32; // 32 bytes for settings
 const authorBufferSize = 128; // 128 bytes for settings
 
@@ -84,7 +91,7 @@ const authorBufferSize = 128; // 128 bytes for settings
 app.use(fileUpload());
 
 // Ensure uploads folder exists
-const uploadDir = path.join(__dirname, "uploads");
+const uploadDir = process.env.UPLOADS_FOLDER;
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true }); // creates folder if missing
 }
@@ -211,7 +218,7 @@ app.post('/user/delete', async (req, res) => {
             );
         }
 
-        const uploadFolder = path.join(__dirname, "uploads", user.$id);
+        const uploadFolder = path.join(process.env.UPLOADS_FOLDER, user.$id);
         if (fs.existsSync(uploadFolder)) {
             fs.rmdirSync(uploadFolder, { recursive: true, force: true });
         }
@@ -297,7 +304,7 @@ app.post('/f/all/stats', async (req, res) => {
                 Query.limit(9999999)
             ]);
         
-        const uploadFolder = path.join(__dirname, "uploads", user.$id);
+        const uploadFolder = path.join(process.env.UPLOADS_FOLDER, user.$id);
 
         // If directory doesnt exist create it
         if (!fs.existsSync(uploadFolder)) {
@@ -395,7 +402,7 @@ app.post('/f/fetchGallery', async (req, res) => {
                 ]);
         }
         
-        const uploadFolder = path.join(__dirname, "uploads", user.$id);
+        const uploadFolder = path.join(process.env.UPLOADS_FOLDER, user.$id);
 
         // If directory doesnt exist create it
         if (!fs.existsSync(uploadFolder)) {
@@ -447,7 +454,7 @@ app.post('/f/delete', async (req, res) => {
             return res.status(403).send("Unauthorized, please try to log in again.");
         }
 
-        const filePath = path.join(__dirname, "uploads", data.file);
+        const filePath = path.join(process.env.UPLOADS_FOLDER, data.file);
 
         // Delete file
         fs.rm(filePath, async (err, files) => {
@@ -514,12 +521,30 @@ app.post('/f/u', async (req, res) => {
             return res.status(400).send("No file uploaded.");
         }
 
-        let file = req.files.file;
+        const file = req.files.file;
+        const allowedMimes = ["image/jpeg", "image/png", "image/gif"];
+
+        if (!allowedMimes.includes(file.mimetype)) {
+            return res.status(400).send("Invalid file type.");
+        }
+
+        let type = null;
+        try {
+            type = await validateFile(file);
+        } catch (err) {
+            console.error("File type:", type);
+            return res.status(400).send("Invalid file type.");
+        }
+
+        if (file.size > MAX_FILE_SIZE) {
+            return res.status(400).send("File too large.");
+        }
+
         await uploadImage(userId, username, file, req ,res);
     }
     catch (error) {
         console.error("Error in file upload:", error);
-        res.status(500).send(error.message);
+        res.status(500).send("Failed to upload file!");
     }
 });
 
@@ -548,7 +573,20 @@ app.post('/f/upload', async (req, res) => {
             return res.status(400).send("No file uploaded.");
         }
 
-        let file = req.files.file;
+        const file = req.files.file;
+
+        if (file.size > MAX_FILE_SIZE) {
+            return res.status(400).send("File too large.");
+        }
+
+        let type = null;
+        try {
+            type = await validateFile(file);
+        } catch (err) {
+            console.error("File type:", type);
+            return res.status(400).send("Invalid file type.");
+        }
+
         uploadImage(user.$id, user.name, file, req ,res);
     }
     catch (error) {
@@ -557,93 +595,99 @@ app.post('/f/upload', async (req, res) => {
     }
 });
 
-async function uploadImage(userId, username, file, req ,res) {
-    const filename = uuid.v4() + ".jpg";
-    const uploadFolder = path.join(__dirname, "uploads", userId);
-    const uploadPath = path.join(uploadFolder, filename);
-
-    // If directory doesnt exist create it
-    if (!fs.existsSync(uploadFolder)) {
-        fs.mkdirSync(uploadFolder);
+async function uploadImage(userId, username, file, req, res) {
+  try {
+    // Validate size
+    if (file.size > MAX_FILE_SIZE) {
+      return res.status(400).send("File too large (max 5MB).");
     }
 
-    // Move the file to uploads folder
-    file.mv(uploadPath, async (err) => {
-        if (err) {
-            return res.status(500).send(err);
+    // Validate type from buffer
+    const type = await FileType.fromBuffer(file.data);
+    if (!type || !ALLOWED_EXTS.includes(type.ext)) {
+      return res.status(400).send("Invalid or unsupported file type.");
+    }
+
+    // Filename and extension
+    const filename = uuid.v4() + "." + type.ext;
+    const uploadFolder = path.join(process.env.UPLOADS_FOLDER, userId);
+    const uploadPath = path.join(uploadFolder, filename);
+
+    if (!fs.existsSync(uploadFolder)) {
+      fs.mkdirSync(uploadFolder, { recursive: true });
+    }
+
+    // Compress image
+    await sharp(file.data)
+        .resize({ height: 2160, withoutEnlargement: true })
+        .jpeg({ quality: 92 })
+        .toFile(uploadPath);
+
+    // Encrypt compressed file
+    const encryptKey = crypto.randomBytes(16); // AES-128
+    const iv = crypto.randomBytes(12);         // 12-byte IV for GCM
+    const compressedBuffer = fs.readFileSync(uploadPath);
+
+    const cipher = crypto.createCipheriv("aes-128-gcm", encryptKey, iv);
+    const encrypted = Buffer.concat([cipher.update(compressedBuffer), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+
+    // Metadata buffers
+    const expire = req.query.expire ? 1 : 0;
+    const limitedTime = req.query.limitedTime ? 1 : 0;
+
+    const settingsBuffer = Buffer.alloc(settingsBufferSize);
+    settingsBuffer[0] = expire;
+    settingsBuffer[1] = limitedTime;
+    settingsBuffer.writeBigUInt64BE(BigInt(Date.now()), 2);
+
+    const authorBuffer = Buffer.alloc(authorBufferSize);
+    const author = `(${userId}) ${username}`;
+    Buffer.from(author, "utf8").copy(authorBuffer, 0, 0, Math.min(author.length, authorBufferSize));
+
+    // Write encrypted file
+    const encryptedData = Buffer.concat([settingsBuffer, authorBuffer, iv, authTag, encrypted]);
+    fs.writeFileSync(uploadPath, encryptedData);
+
+    // Save encryption key
+    let imageKeyBase64 = encryptKey.toString("base64").replace(/=+$/, "");
+    const keysDatabase = new Databases(adminClient);
+    await keysDatabase.createDocument(
+        process.env.APPWRITE_DATABASE_ID,
+        process.env.APPWRITE_KEYS_ID,
+        ID.unique(),
+        {
+            file: `${userId}/${filename}`,
+            encryptionKey: imageKeyBase64,
+            userId: userId
         }
-        try {
-            const filePath = await compress(file.data, uploadPath);
+    );
 
-            const encryptKey = crypto.randomBytes(16); // 16 bytes for AES-128
-            const iv = crypto.randomBytes(12); // 12 bytes for GCM
+    // Notify sockets
+    const sockets = Array.from(connectedSockets.values())
+      .filter((data) => data.userId === userId)
+      .map((data) => data.socket);
 
-            // Encrypt the compressed file using AES-128-GCM
-            const compressedBuffer = fs.readFileSync(filePath);
-            const cipher = crypto.createCipheriv('aes-128-gcm', encryptKey, iv);
-            const encrypted = Buffer.concat([cipher.update(compressedBuffer), cipher.final()]);
-            const authTag = cipher.getAuthTag();
-
-            // Settings
-            const expire = req.query.expire ? 1 : 0;
-            const limitedTime = req.query.limitedTime ? 1 : 0;
-
-            const settingsBuffer = Buffer.alloc(settingsBufferSize);
-            settingsBuffer[0] = expire;
-            settingsBuffer[1] = limitedTime;
-
-            // Store timestamp (8 bytes) at offset 2
-            const uploadTime = BigInt(Date.now());
-            settingsBuffer.writeBigUInt64BE(uploadTime, 2);
-
-            // Author info
-            const authorBuffer = Buffer.alloc(authorBufferSize);
-            const author = `(${userId}) ${username}`;
-            const authorBytes = Buffer.from(author, 'utf8');
-            authorBytes.copy(authorBuffer, 0, 0, Math.min(authorBytes.length, authorBufferSize));
-            
-            // The rest remain zero
-            const encryptedData = Buffer.concat([settingsBuffer, authorBuffer, iv, authTag, encrypted]);
-            fs.writeFileSync(filePath, encryptedData);
-
-            let imageKeyBase64 = encryptKey.toString('base64');
-            imageKeyBase64 = imageKeyBase64.replace(/=+$/, ''); // Remove trailing '='
-
-            // Save key in database
-            const keysDatabase = new Databases(adminClient);
-
-            keysDatabase.createDocument(
-                process.env.APPWRITE_DATABASE_ID,
-                process.env.APPWRITE_KEYS_ID,
-                ID.unique(),
-                {
-                    file: `${userId}/${filename}`,
-                    encryptionKey: imageKeyBase64,
-                    userId: userId
-                });
-            
-            const sockets = Array.from(connectedSockets.entries())
-                .filter(([_, data]) => data.userId === userId)
-                .map(([_, data]) => (data.socket));
-            sockets.forEach((socket) => {
-                try {
-                    socket.emit('addImage');
-                } catch (error) {
-                    console.error(error);
-                }
-            });
-
-            res.json({
-                filename: filename,
-                key: imageKeyBase64,
-                url: `${req.get('host').includes("localhost") ? "http" : "https"}://${req.get('host')}/f/${userId}/${filename}?c=${encodeURIComponent(imageKeyBase64)}`
-            });
-        }
-        catch (error) {
-            return res.status(500).send("Error compressing file: " + error.message);
-        }
+    sockets.forEach((socket) => {
+      try {
+        socket.emit("addImage");
+      } catch (error) {
+        console.error(error);
+      }
     });
+
+    // Response
+    res.json({
+      filename,
+      key: imageKeyBase64,
+      url: `${req.get("host").includes("localhost") ? "http" : "https"}://${req.get("host")}/f/${userId}/${filename}?c=${encodeURIComponent(imageKeyBase64)}`
+    });
+  } catch (error) {
+    console.error("Upload failed:", error);
+    return res.status(500).send("Error uploading file.");
+  }
 }
+
 
 // Read a file
 app.get('/f/:filename', async (req, res) => {
@@ -744,16 +788,12 @@ function decrypt(encryptedBuffer, keyBase64, res) {
     };
 }
 
-// Compress image to 200 KB and convert to JPEG
-async function compress(fileBuffer, filePath) {
-    try {
-        await sharp(fileBuffer)
-            .resize({ height: 2160, withoutEnlargement: true }) // Resize to a maximum width of 800px
-            .jpeg({ quality: 92 }) // Set JPEG quality to 92%
-            .toFile(filePath);
-        return filePath;
-    } catch (error) {
-        console.error("Error compressing image:", error);
-        throw error;
-    }
+async function validateFile(file) {
+  const type = await FileType.fromBuffer(file.data);
+
+  if (!type || !ALLOWED_EXTS.includes(type.ext)) {
+    throw new Error("Invalid or unsupported file type");
+  }
+
+  return type;
 }
