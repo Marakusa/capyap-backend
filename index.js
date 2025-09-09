@@ -792,7 +792,8 @@ async function validateFile(file) {
   const type = await FileType.fromBuffer(file.data);
 
   if (!type || !ALLOWED_EXTS.includes(type.ext)) {
-    throw new Error("Invalid or unsupported file type");
+    console.error("Invalid or unsupported file type: " + (type ? type.ext : "unknown"));
+    throw new Error("Invalid or unsupported file type: " + (type ? type.ext : "unknown"));
   }
 
   return type;
