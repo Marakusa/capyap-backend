@@ -709,7 +709,7 @@ async function uploadImage(userId, username, file, req, res) {
                 fit: "inside", withoutEnlargement: true })
             .gif({ 
                 quality: maxNumber(req?.query?.quality, 70) ?? 70, 
-                effort: 7, colors: 128, dither: 1, reoptimise: true, loop: 0 })
+                effort: 10, colors: 182, loop: 0 })
             .toFile(uploadPath);
     } else if (type.ext === "png") {
         await sharp(file.data)
@@ -719,8 +719,8 @@ async function uploadImage(userId, username, file, req, res) {
                 fit: "inside", withoutEnlargement: true })
             .png({ 
                 quality: maxNumber(req?.query?.quality, 92) ?? 92, 
-                compressionLevel: maxNumber(req?.query?.compressionLevel, 8) ?? 8, 
-                adaptiveFiltering: true, force: true })
+                compressionLevel: maxNumber(req?.query?.compressionLevel, 6) ?? 6
+            })
             .toFile(uploadPath);
     } else {
         await sharp(file.data)
@@ -728,10 +728,7 @@ async function uploadImage(userId, username, file, req, res) {
                 height: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
                 width: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
                 fit: "inside", withoutEnlargement: true })
-            .jpeg({ 
-                quality: maxNumber(req?.query?.quality, 92) ?? 92, 
-                compressionLevel: maxNumber(req?.query?.compressionLevel, 8) ?? 8, 
-                progressive: true, force: true })
+            .jpeg({ quality: maxNumber(req?.query?.quality, 92) ?? 92 })
             .toFile(uploadPath);
     }
 
