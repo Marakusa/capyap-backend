@@ -347,11 +347,73 @@ app.post('/f/all/stats', async (req, res) => {
     }
 });
 
-const dirSize = async directory => {
-  const files = await readdir( directory );
-  const stats = files.map( file => stat( safeJoin( directory, file ) ) );
+app.post('/f/stats', async (req, res) => {
+    try {
+        const data = req.body;
 
-  return ( await Promise.all( stats ) ).reduce( ( accumulator, { size } ) => accumulator + size, 0 );
+        if (!data || !data.sessionKey) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        const userClient = new Client()
+            .setEndpoint(process.env.APPWRITE_ENDPOINT)
+            .setProject(process.env.APPWRITE_PROJECT_ID)
+            .setJWT(data.sessionKey);
+
+        const account = new Account(userClient);
+
+        const user = await account.get();
+        if (!user) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        if (!data || !data.file) {
+            return res.status(400).send("File unspecified.");
+        }
+
+        // Save key in database
+        const keysDatabase = new Databases(adminClient);
+
+        let picture = await keysDatabase.listDocuments(
+            process.env.APPWRITE_DATABASE_ID,
+            process.env.APPWRITE_KEYS_ID,
+            [
+                Query.equal('userId', user.$id),
+                Query.equal('file', data.file)
+            ]);
+
+        const filePath = safeJoin(process.env.UPLOADS_FOLDER, user.$id + "/" + data.file.split("/").pop());
+
+        // If directory doesnt exist create it
+        if (!fs.existsSync(filePath) || picture.documents.length <= 0) {
+            return res.status(404).send("File not found.");
+        }
+        
+        let allSize = await fileSize(filePath);
+        let totalViews = picture.documents[0].views ?? 0;
+        
+        res.json({
+            size: humanFileSize(allSize, true),
+            views: totalViews,
+            uploadedAt: picture.documents[0].$createdAt
+        });
+    }
+    catch (error) {
+        console.error("Error in fetching statistics:", error);
+        res.status(500).send("Failed to fetch statistics.");
+    }
+});
+
+const dirSize = async directory => {
+    const files = await readdir( directory );
+    const stats = files.map( file => stat( safeJoin( directory, file ) ) );
+
+    return ( await Promise.all( stats ) ).reduce( ( accumulator, { size } ) => accumulator + size, 0 );
+};
+
+const fileSize = async file => {
+    const stats = await stat(file);
+    return stats.size;
 };
 
 // Fetch gallery
@@ -630,7 +692,7 @@ async function uploadImage(userId, username, file, req, res) {
     }
 
     // Filename and extension
-    const filename = uuid.v4() + "." + (type.ext === "gif" ? "gif" : "jpg");
+    const filename = uuid.v4() + "." + (type.ext === "gif" ? "gif" : (type.ext === "png" ? "png" : "jpg"));
     const uploadFolder = safeJoin(process.env.UPLOADS_FOLDER, userId);
     const uploadPath = safeJoin(uploadFolder, filename);
 
@@ -641,13 +703,35 @@ async function uploadImage(userId, username, file, req, res) {
     // Compress image
     if (type.ext === "gif") {
         await sharp(file.data, { animated: true })
-            .resize({ height: 512, width: 512, fit: "inside", withoutEnlargement: true })
-            .gif({ quality: 70, effort: 7, colors: 128, dither: 1, reoptimise: true, loop: 0 })
+            .resize({ 
+                height: maxNumber(req?.query?.maxSize, 400) ?? 400, 
+                width: maxNumber(req?.query?.maxSize, 400) ?? 400, 
+                fit: "inside", withoutEnlargement: true })
+            .gif({ 
+                quality: maxNumber(req?.query?.quality, 70) ?? 70, 
+                effort: 7, colors: 128, dither: 1, reoptimise: true, loop: 0 })
+            .toFile(uploadPath);
+    } else if (type.ext === "png") {
+        await sharp(file.data)
+            .resize({ 
+                height: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
+                width: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
+                fit: "inside", withoutEnlargement: true })
+            .png({ 
+                quality: maxNumber(req?.query?.quality, 92) ?? 92, 
+                compressionLevel: maxNumber(req?.query?.compressionLevel, 8) ?? 8, 
+                adaptiveFiltering: true, force: true })
             .toFile(uploadPath);
     } else {
         await sharp(file.data)
-            .resize({ height: 2160, width: 2160, fit: "inside", withoutEnlargement: true })
-            .jpeg({ quality: 92 })
+            .resize({ 
+                height: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
+                width: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
+                fit: "inside", withoutEnlargement: true })
+            .jpeg({ 
+                quality: maxNumber(req?.query?.quality, 92) ?? 92, 
+                compressionLevel: maxNumber(req?.query?.compressionLevel, 8) ?? 8, 
+                progressive: true, force: true })
             .toFile(uploadPath);
     }
 
@@ -716,6 +800,13 @@ async function uploadImage(userId, username, file, req, res) {
   }
 }
 
+function maxNumber(value, max) {
+    if (!value) {
+        return max;
+    }
+    return Math.min(value, max ?? value);
+}
+
 // Read a file
 app.get('/f/:userId/:filename', async (req, res) => {
     const filename = req.params.userId + "/" + req.params.filename;
@@ -726,7 +817,7 @@ async function handleReadFile(req, res, filename) {
     const filePath = safeJoin(uploadDir, filename);
     const noView = req.query["noView"];
 
-    if ((!filename.endsWith(".jpg") && !filename.endsWith(".gif")) || !fs.existsSync(filePath)) {
+    if ((!filename.endsWith(".jpg") && !filename.endsWith(".gif") && !filename.endsWith(".png")) || !fs.existsSync(filePath)) {
         res.setHeader('Cache-Control', 'no-store');
         const notFoundFileBuffer = fs.readFileSync("404.jpg");
         res.setHeader('Content-Type', 'image/jpeg');
@@ -760,6 +851,8 @@ async function handleReadFile(req, res, filename) {
 
         if (filename.endsWith(".gif")) {
             res.setHeader('Content-Type', 'image/gif');
+        } else if (filename.endsWith(".png")) {
+            res.setHeader('Content-Type', 'image/png');
         } else {
             res.setHeader('Content-Type', 'image/jpeg');
         }
