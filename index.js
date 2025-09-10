@@ -640,9 +640,9 @@ async function uploadImage(userId, username, file, req, res) {
 
     // Compress image
     if (type.ext === "gif") {
-        await sharp(file.data)
-            .resize({ height: 256, width: 256, fit: "inside", withoutEnlargement: true })
-            .gif({ quality: 50, effort: 7, colors: 128, dither: 1, reoptimise: true, loop: 1 })
+        await sharp(file.data, { animated: true })
+            .resize({ height: 512, width: 512, fit: "inside", withoutEnlargement: true })
+            .gif({ quality: 70, effort: 7, colors: 128, dither: 1, reoptimise: true, loop: 0 })
             .toFile(uploadPath);
     } else {
         await sharp(file.data)
