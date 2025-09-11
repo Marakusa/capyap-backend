@@ -78,26 +78,6 @@ io.on('connection', (socket) => {
     });
 });
 
-io.on('updateUser', (userId) => {
-    console.log("Update user:", userId);
-    if (!userId) {
-        console.error("No userId provided for updateUser");
-        return;
-    }
-    // Notify sockets
-    const sockets = Array.from(connectedSockets.values())
-        .filter((data) => data.userId === userId)
-        .map((data) => data.socket);
-
-    sockets.forEach((socket) => {
-        try {
-            socket.emit("updateUser-server");
-        } catch (error) {
-            console.error(error);
-        }
-    });
-});
-
 // Max allowed file size
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
@@ -302,6 +282,20 @@ app.post('/user/setAvatar', async (req, res) => {
         const updatedUser = await account.updatePrefs({
             "photoURL": fileUrl
         });
+
+        // Notify sockets
+        const sockets = Array.from(connectedSockets.values())
+            .filter((data) => data.userId === user.$id)
+            .map((data) => data.socket);
+
+        sockets.forEach((socket) => {
+            try {
+                socket.emit("updateUser-server");
+            } catch (error) {
+                console.error(error);
+            }
+        });
+
         res.json(updatedUser);
     }
     catch (error) {
