@@ -78,6 +78,26 @@ io.on('connection', (socket) => {
     });
 });
 
+io.on('updateUser', (userId) => {
+    console.log("Update user:", userId);
+    if (!userId) {
+        console.error("No userId provided for updateUser");
+        return;
+    }
+    // Notify sockets
+    const sockets = Array.from(connectedSockets.values())
+        .filter((data) => data.userId === userId)
+        .map((data) => data.socket);
+
+    sockets.forEach((socket) => {
+        try {
+            socket.emit("updateUser-server");
+        } catch (error) {
+            console.error(error);
+        }
+    });
+});
+
 // Max allowed file size
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
@@ -250,6 +270,43 @@ app.post('/user/delete', async (req, res) => {
     catch (error) {
         console.error("Error in file deletion:", error);
         res.status(500).send("Failed to delete account.");
+    }
+});
+
+// Set avatar
+app.post('/user/setAvatar', async (req, res) => {
+    try {
+        const data = req.body;
+        const fileUrl = data?.file;
+
+        if (!data || !data.sessionKey) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+        
+        if (!fileUrl) {
+            return res.status(400).send("No file set.");
+        }
+
+        const userClient = new Client()
+            .setEndpoint(process.env.APPWRITE_ENDPOINT)
+            .setProject(process.env.APPWRITE_PROJECT_ID)
+            .setJWT(data.sessionKey);
+
+        const account = new Account(userClient);
+
+        const user = await account.get();
+        if (!user) {
+            return res.status(403).send("Unauthorized, please try to log in again.");
+        }
+
+        const updatedUser = await account.updatePrefs({
+            "photoURL": fileUrl
+        });
+        res.json(updatedUser);
+    }
+    catch (error) {
+        console.error("Error in setting avatar:", error);
+        res.status(500).send("Failed to set avatar.");
     }
 });
 
