@@ -26,21 +26,11 @@ const server = app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
 });
 
-var io;
-
-if (process.env.ENV === "dev") {
-    io = new Server(server, {
-        cors: {
-            origin: 'http://localhost:5891'
-        }
-    });
-} else {
-    io = new Server(server, {
-        cors: {
-            origin: 'https://sc.marakusa.me'
-        }
-    });
-}
+var io = new Server(server, {
+    cors: {
+        origin: process.env.SOCKET_IO_ALLOW_ORIGIN || 'http://localhost:3000',
+    }
+});
 
 const connectedSockets = new Map();
 
