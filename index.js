@@ -469,7 +469,15 @@ app.post('/f/fetchGallery', async (req, res) => {
             return res.status(403).send("Unauthorized, please try to log in again.");
         }
 
-        if (limit > 100) {
+        if (page != null && isNaN(parseInt(page))) {
+            return res.status(400).send("Page must be a number.");
+        }
+
+        if (limit != null && isNaN(parseInt(limit))) {
+            return res.status(400).send("Limit must be a number.");
+        }
+
+        if (parseInt(limit) > 100) {
             return res.status(400).send("Page limit cannot be higher than 100.");
         }
 
@@ -497,6 +505,7 @@ app.post('/f/fetchGallery', async (req, res) => {
                 [
                     Query.equal('userId', user.$id),
                     Query.orderDesc('\$createdAt'),
+                    Query.limit(limit ?? 25),
                     Query.greaterThan('\$createdAt', fetchFrom)
                 ]);
         } else if (page != null) {
@@ -516,7 +525,7 @@ app.post('/f/fetchGallery', async (req, res) => {
                 [
                     Query.equal('userId', user.$id),
                     Query.orderDesc('\$createdAt'),
-                    Query.limit(25),
+                    Query.limit(limit ?? 25),
                     Query.offset(0)
                 ]);
         }
