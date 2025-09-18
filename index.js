@@ -4,13 +4,13 @@ const cors = require('cors');
 const fileUpload = require("express-fileupload");
 const path = require("path");
 const fs = require("fs");
-const { readdir, stat } = require('fs/promises');
 const uuid = require("uuid");
 const sharp = require('sharp');
 const crypto = require('crypto');
 const { Client, Account, OAuthProvider, Databases, ID, Query, Users } = require('node-appwrite');
 const { Server } = require('socket.io');
 const rateLimit = require('express-rate-limit');
+const FileAPI = require('./FileAPI.js');
 
 const adminClient = new Client()
     .setEndpoint(process.env.APPWRITE_ENDPOINT)
@@ -95,13 +95,6 @@ app.use((req, res, next) => {
 
 // Middleware to handle file uploads
 app.use(fileUpload());
-
-// Ensure uploads folder exists
-const uploadDir = process.env.UPLOADS_FOLDER || path.join(__dirname, "uploads");
-
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true }); // creates folder if missing
-}
 
 app.get('/oauth', async (req, res) => {
     const isDesktop = req.query["desktop"] != null;
@@ -226,9 +219,7 @@ app.post('/user/delete', async (req, res) => {
         }
 
         const uploadFolder = safeJoin(process.env.UPLOADS_FOLDER, user.$id);
-        if (fs.existsSync(uploadFolder)) {
-            fs.rmdirSync(uploadFolder, { recursive: true, force: true });
-        }
+        await FileAPI.deleteFolder(uploadFolder);
         
         const users = new Users(adminClient);
 
@@ -362,13 +353,13 @@ app.post('/f/all/stats', async (req, res) => {
                 Query.limit(9999999)
             ]);
         
-        const uploadFolder = safeJoin(process.env.UPLOADS_FOLDER, user.$id);
+        const uploadFolder = path.normalize(user.$id);
 
-        // If directory doesnt exist create it
-        if (!fs.existsSync(uploadFolder)) {
-            fs.mkdirSync(uploadFolder);
+        // Check if directory exists
+        if (!(await FileAPI.dirExists(uploadFolder))) {
+            await FileAPI.mkdir(uploadFolder);
         }
-        
+
         let allSize = await dirSize(uploadFolder);
 
         let totalViews = 0;
@@ -421,13 +412,12 @@ app.post('/f/stats', async (req, res) => {
             process.env.APPWRITE_KEYS_ID,
             [
                 Query.equal('userId', user.$id),
-                Query.equal('file', data.file)
+                Query.equal('file', data.file.replaceAll("\\", "/"))
             ]);
 
-        const filePath = safeJoin(process.env.UPLOADS_FOLDER, user.$id + "/" + data.file.split("/").pop());
+        const filePath = safeJoin(user.$id, data.file.split("/").pop());
 
-        // If directory doesnt exist create it
-        if (!fs.existsSync(filePath) || picture.documents.length <= 0) {
+        if (!(await FileAPI.fileExists(filePath)) || picture.documents.length <= 0) {
             return res.status(404).send("File not found.");
         }
         
@@ -447,14 +437,12 @@ app.post('/f/stats', async (req, res) => {
 });
 
 const dirSize = async directory => {
-    const files = await readdir( directory );
-    const stats = files.map( file => stat( safeJoin( directory, file ) ) );
-
-    return ( await Promise.all( stats ) ).reduce( ( accumulator, { size } ) => accumulator + size, 0 );
+    const stats = await FileAPI.getStats(directory);
+    return stats.size;
 };
 
 const fileSize = async file => {
-    const stats = await stat(file);
+    const stats = await FileAPI.getStats(file);
     return stats.size;
 };
 
@@ -531,13 +519,6 @@ app.post('/f/fetchGallery', async (req, res) => {
                 ]);
         }
         
-        const uploadFolder = safeJoin(process.env.UPLOADS_FOLDER, user.$id);
-
-        // If directory doesnt exist create it
-        if (!fs.existsSync(uploadFolder)) {
-            fs.mkdirSync(uploadFolder);
-        }
-        
         let output = [];
         
         for (let picture of pictures.documents) {
@@ -587,7 +568,7 @@ app.post('/f/delete', async (req, res) => {
             return res.status(400).send("Invalid file name.");
         }
 
-        const filePath = safeJoin(process.env.UPLOADS_FOLDER, user.$id + "/" + data.file);
+        const filePath = safeJoin(user.$id, data.file);
         
         try {
             // Remove key in database
@@ -597,7 +578,7 @@ app.post('/f/delete', async (req, res) => {
                 process.env.APPWRITE_DATABASE_ID,
                 process.env.APPWRITE_KEYS_ID,
                 [
-                    Query.equal('file', user.$id + "/" + data.file),
+                    Query.equal('file', filePath.replaceAll("\\", "/")),
                     Query.equal('userId', user.$id)
                 ]);
             
@@ -609,9 +590,7 @@ app.post('/f/delete', async (req, res) => {
             }
 
             // Delete file
-            if (fs.existsSync(filePath)) {
-                await fs.promises.rm(filePath);
-            }
+            await FileAPI.deleteFile(filePath);
             
             res.json({success: true});
         }
@@ -728,124 +707,124 @@ app.post('/f/upload', uploadLimiter, async (req, res) => {
 });
 
 async function uploadImage(userId, username, file, req, res) {
-  try {
-    // Validate size
-    if (file.size > MAX_FILE_SIZE) {
-      return res.status(400).send("File too large (max 5MB).");
-    }
-
-    // Validate type from buffer
-    const type = await detectFileType(file.data);
-
-    if (!type || !ALLOWED_EXTS.includes(type.ext)) {
-        console.error("Invalid or unsupported file type: " + (type ? type.ext : "unknown"));
-        return res.status(400).send("Invalid or unsupported file type.");
-    }
-
-    // Filename and extension
-    const filename = uuid.v4() + "." + (type.ext === "gif" ? "gif" : (type.ext === "png" ? "png" : "jpg"));
-    const uploadFolder = safeJoin(process.env.UPLOADS_FOLDER, userId);
-    const uploadPath = safeJoin(uploadFolder, filename);
-
-    if (!fs.existsSync(uploadFolder)) {
-      fs.mkdirSync(uploadFolder, { recursive: true });
-    }
-
-    // Compress image
-    if (type.ext === "gif") {
-        await sharp(file.data, { animated: true })
-            .resize({ 
-                height: maxNumber(req?.query?.maxSize, 400) ?? 400, 
-                width: maxNumber(req?.query?.maxSize, 400) ?? 400, 
-                fit: "inside", withoutEnlargement: true })
-            .gif({ 
-                quality: maxNumber(req?.query?.quality, 70) ?? 70, 
-                effort: 10, colors: 182, loop: 0 })
-            .toFile(uploadPath);
-    } else if (type.ext === "png") {
-        await sharp(file.data)
-            .resize({ 
-                height: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
-                width: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
-                fit: "inside", withoutEnlargement: true })
-            .png({ 
-                quality: maxNumber(req?.query?.quality, 92) ?? 92, 
-                compressionLevel: maxNumber(req?.query?.compressionLevel, 6) ?? 6
-            })
-            .toFile(uploadPath);
-    } else {
-        await sharp(file.data)
-            .resize({ 
-                height: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
-                width: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
-                fit: "inside", withoutEnlargement: true })
-            .jpeg({ quality: maxNumber(req?.query?.quality, 92) ?? 92 })
-            .toFile(uploadPath);
-    }
-
-    // Encrypt compressed file
-    const encryptKey = crypto.randomBytes(16); // AES-128
-    const iv = crypto.randomBytes(12);         // 12-byte IV for GCM
-    const compressedBuffer = fs.readFileSync(uploadPath);
-
-    const cipher = crypto.createCipheriv("aes-128-gcm", encryptKey, iv);
-    const encrypted = Buffer.concat([cipher.update(compressedBuffer), cipher.final()]);
-    const authTag = cipher.getAuthTag();
-
-    // Metadata buffers
-    const expire = req.query.expire ? 1 : 0;
-    const limitedTime = req.query.limitedTime ? 1 : 0;
-
-    const settingsBuffer = Buffer.alloc(settingsBufferSize);
-    settingsBuffer[0] = expire;
-    settingsBuffer[1] = limitedTime;
-    settingsBuffer.writeBigUInt64BE(BigInt(Date.now()), 2);
-
-    const authorBuffer = Buffer.alloc(authorBufferSize);
-    const author = `(${userId}) ${username}`;
-    Buffer.from(author, "utf8").copy(authorBuffer, 0, 0, Math.min(author.length, authorBufferSize));
-
-    // Write encrypted file
-    const encryptedData = Buffer.concat([settingsBuffer, authorBuffer, iv, authTag, encrypted]);
-    await fs.promises.writeFile(uploadPath, encryptedData);
-
-    // Save encryption key
-    let imageKeyBase64 = encryptKey.toString("base64").replace(/=+$/, "");
-    const keysDatabase = new Databases(adminClient);
-    await keysDatabase.createDocument(
-        process.env.APPWRITE_DATABASE_ID,
-        process.env.APPWRITE_KEYS_ID,
-        ID.unique(),
-        {
-            file: `${userId}/${filename}`,
-            encryptionKey: imageKeyBase64,
-            userId: userId
+    try {
+        // Validate size
+        if (file.size > MAX_FILE_SIZE) {
+            return res.status(400).send("File too large (max 5MB).");
         }
-    );
 
-    // Notify sockets
-    const sockets = Array.from(connectedSockets.values())
-      .filter((data) => data.userId === userId)
-      .map((data) => data.socket);
+        // Validate type from buffer
+        const type = await detectFileType(file.data);
 
-    sockets.forEach((socket) => {
-      try {
-        socket.emit("addImage");
-      } catch (error) {
-        console.error(error);
-      }
-    });
+        if (!type || !ALLOWED_EXTS.includes(type.ext)) {
+            console.error("Invalid or unsupported file type: " + (type ? type.ext : "unknown"));
+            return res.status(400).send("Invalid or unsupported file type.");
+        }
 
-    // Response
-    res.json({
-      filename,
-      key: imageKeyBase64,
-      url: `${req.get("host").includes("localhost") ? "http" : "https"}://${req.get("host")}/f/${userId}/${filename}?c=${encodeURIComponent(imageKeyBase64)}`
-    });
-  } catch (error) {
-    console.error("Upload failed for userId:", userId, error.message);
-    return res.status(500).send("Error uploading file.");
-  }
+        // Filename and extension
+        const filename = uuid.v4() + "." + (type.ext === "gif" ? "gif" : (type.ext === "png" ? "png" : "jpg"));
+        const tempUploadPath = safeJoin(process.env.UPLOADS_FOLDER, userId + "_" + filename);
+        const uploadPath = safeJoin(userId, filename);
+
+        // Compress image
+        if (type.ext === "gif") {
+            await sharp(file.data, { animated: true })
+                .resize({ 
+                    height: maxNumber(req?.query?.maxSize, 400) ?? 400, 
+                    width: maxNumber(req?.query?.maxSize, 400) ?? 400, 
+                    fit: "inside", withoutEnlargement: true })
+                .gif({ 
+                    quality: maxNumber(req?.query?.quality, 70) ?? 70, 
+                    effort: 10, colors: 182, loop: 0 })
+                .toFile(tempUploadPath);
+        } else if (type.ext === "png") {
+            await sharp(file.data)
+                .resize({ 
+                    height: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
+                    width: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
+                    fit: "inside", withoutEnlargement: true })
+                .png({ 
+                    quality: maxNumber(req?.query?.quality, 92) ?? 92, 
+                    compressionLevel: maxNumber(req?.query?.compressionLevel, 6) ?? 6
+                })
+                .toFile(tempUploadPath);
+        } else {
+            await sharp(file.data)
+                .resize({ 
+                    height: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
+                    width: maxNumber(req?.query?.maxSize, 2160) ?? 2160, 
+                    fit: "inside", withoutEnlargement: true })
+                .jpeg({ quality: maxNumber(req?.query?.quality, 92) ?? 92 })
+                .toFile(tempUploadPath);
+        }
+
+        // Upload tempUploadPath to file api
+        await FileAPI.writeFile(uploadPath, fs.readFileSync(tempUploadPath));
+        fs.rmSync(tempUploadPath);
+
+        // Encrypt compressed file
+        const encryptKey = crypto.randomBytes(16); // AES-128
+        const iv = crypto.randomBytes(12);         // 12-byte IV for GCM
+        const compressedBuffer = await FileAPI.readFile(uploadPath);
+
+        const cipher = crypto.createCipheriv("aes-128-gcm", encryptKey, iv);
+        const encrypted = Buffer.concat([cipher.update(compressedBuffer), cipher.final()]);
+        const authTag = cipher.getAuthTag();
+
+        // Metadata buffers
+        const expire = req.query.expire ? 1 : 0;
+        const limitedTime = req.query.limitedTime ? 1 : 0;
+
+        const settingsBuffer = Buffer.alloc(settingsBufferSize);
+        settingsBuffer[0] = expire;
+        settingsBuffer[1] = limitedTime;
+        settingsBuffer.writeBigUInt64BE(BigInt(Date.now()), 2);
+
+        const authorBuffer = Buffer.alloc(authorBufferSize);
+        const author = `(${userId}) ${username}`;
+        Buffer.from(author, "utf8").copy(authorBuffer, 0, 0, Math.min(author.length, authorBufferSize));
+
+        // Write encrypted file
+        const encryptedData = Buffer.concat([settingsBuffer, authorBuffer, iv, authTag, encrypted]);
+        await FileAPI.writeFile(uploadPath, encryptedData);
+
+        // Save encryption key
+        let imageKeyBase64 = encryptKey.toString("base64").replace(/=+$/, "");
+        const keysDatabase = new Databases(adminClient);
+        await keysDatabase.createDocument(
+            process.env.APPWRITE_DATABASE_ID,
+            process.env.APPWRITE_KEYS_ID,
+            ID.unique(),
+            {
+                file: `${userId}/${filename}`,
+                encryptionKey: imageKeyBase64,
+                userId: userId
+            }
+        );
+
+        // Notify sockets
+        const sockets = Array.from(connectedSockets.values())
+            .filter((data) => data.userId === userId)
+            .map((data) => data.socket);
+
+        sockets.forEach((socket) => {
+            try {
+                socket.emit("addImage");
+            } catch (error) {
+                console.error(error);
+            }
+        });
+
+        // Response
+        res.json({
+            filename,
+            key: imageKeyBase64,
+            url: `${req.get("host").includes("localhost") ? "http" : "https"}://${req.get("host")}/f/${userId}/${filename}?c=${encodeURIComponent(imageKeyBase64)}`
+        });
+    } catch (error) {
+        console.error("Upload failed for userId:", userId, error.message);
+        return res.status(500).send("Error uploading file.");
+    }
 }
 
 function maxNumber(value, max) {
@@ -857,15 +836,15 @@ function maxNumber(value, max) {
 
 // Read a file
 app.get('/f/:userId/:filename', async (req, res) => {
-    const filename = req.params.userId + "/" + req.params.filename;
+    const filename = safeJoin(req.params.userId, req.params.filename);
     await handleReadFile(req, res, filename);
 });
 
 async function handleReadFile(req, res, filename) {
-    const filePath = safeJoin(uploadDir, filename);
+    const filePath = filename;
     const noView = req.query["noView"];
 
-    if ((!filename.endsWith(".jpg") && !filename.endsWith(".gif") && !filename.endsWith(".png")) || !fs.existsSync(filePath)) {
+    if ((!filename.endsWith(".jpg") && !filename.endsWith(".gif") && !filename.endsWith(".png")) || !(await FileAPI.fileExists(filePath))) {
         res.setHeader('Cache-Control', 'no-store');
         const notFoundFileBuffer = fs.readFileSync("404.jpg");
         res.setHeader('Content-Type', 'image/jpeg');
@@ -874,7 +853,7 @@ async function handleReadFile(req, res, filename) {
     
     try {
         const key = req.query.c || req.headers['x-file-key'];
-        const fileBuffer = fs.readFileSync(filePath);
+        const fileBuffer = await FileAPI.readFile(filePath);
         const decryptedData = decrypt(fileBuffer, key, res);
 
         const settings = decryptedData.settings;
@@ -889,7 +868,7 @@ async function handleReadFile(req, res, filename) {
             if (fileAge > 10000) { // 10 seconds
                 // Remove the image data from the file but keep the settings
                 const newFileBuffer = Buffer.concat([decryptedData.settings, decryptedData.author]);
-                await fs.promises.writeFile(filePath, newFileBuffer);
+                await await FileAPI.writeFile(filePath, newFileBuffer);
 
                 const expiredFileBuffer = fs.readFileSync("expired.jpg");
                 res.setHeader('Content-Type', 'image/jpeg');
@@ -917,8 +896,13 @@ async function handleReadFile(req, res, filename) {
             process.env.APPWRITE_DATABASE_ID,
             process.env.APPWRITE_KEYS_ID,
             [
-                Query.equal('file', filename)
+                Query.equal('file', filename.replaceAll("\\", "/"))
             ]);
+        
+        if (files.documents.length <= 0) {
+            return;
+        }
+
         let fileId = files.documents[0].$id;
         let views = files.documents[0].views ?? 0;
         views++;
@@ -970,13 +954,14 @@ async function detectFileType(buffer) {
 }
 
 function safeJoin(base, target) {
-    const resolvedBase = path.resolve(base);
-    const resolvedTarget = path.resolve(resolvedBase, target);
+    const resolvedBase = path.normalize(base);
+    const resolvedTarget = path.normalize(resolvedBase + "/" + target);
 
     // Allow exact match or subpath
     if (!resolvedTarget.startsWith(resolvedBase + path.sep) && resolvedTarget !== resolvedBase) {
         throw new Error("Invalid path.");
     }
 
+    resolvedTarget.replaceAll("\\", "/");
     return resolvedTarget;
 }
