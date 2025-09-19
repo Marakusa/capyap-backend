@@ -70,7 +70,7 @@ io.on('connection', (socket) => {
 });
 
 // Max allowed file size
-const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const MAX_FILE_SIZE = 12 * 1024 * 1024;
 
 // Allowed extensions
 const ALLOWED_EXTS = ["jpg", "jpeg", "png", "gif"];
