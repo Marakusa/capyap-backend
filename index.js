@@ -18,6 +18,7 @@ const adminClient = new Client()
     .setKey(process.env.APPWRITE_API_KEY);
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json());
 const PORT = process.env.PORT || 3000;
@@ -95,6 +96,12 @@ app.use((req, res, next) => {
 
 // Middleware to handle file uploads
 app.use(fileUpload());
+
+app.get('/debug-ip', (req, res) => {
+  console.log('headers.x-forwarded-for:', req.headers['x-forwarded-for']);
+  console.log('req.ip:', req.ip);
+  res.json({ ip: req.ip, xff: req.headers['x-forwarded-for'] });
+});
 
 app.get('/oauth', async (req, res) => {
     const isDesktop = req.query["desktop"] != null;
