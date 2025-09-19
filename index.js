@@ -97,12 +97,6 @@ app.use((req, res, next) => {
 // Middleware to handle file uploads
 app.use(fileUpload());
 
-app.get('/debug-ip', (req, res) => {
-  console.log('headers.x-forwarded-for:', req.headers['x-forwarded-for']);
-  console.log('req.ip:', req.ip);
-  res.json({ ip: req.ip, xff: req.headers['x-forwarded-for'] });
-});
-
 app.get('/oauth', async (req, res) => {
     const isDesktop = req.query["desktop"] != null;
 
@@ -829,6 +823,7 @@ async function uploadImage(userId, username, file, req, res) {
             url: `${req.get("host").includes("localhost") ? "http" : "https"}://${req.get("host")}/f/${userId}/${filename}?c=${encodeURIComponent(imageKeyBase64)}`
         });
     } catch (error) {
+        console.error(error);
         console.error("Upload failed for userId:", userId, error.message);
         return res.status(500).send("Error uploading file.");
     }
