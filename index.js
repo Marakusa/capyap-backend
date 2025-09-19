@@ -823,7 +823,6 @@ async function uploadImage(userId, username, file, req, res) {
             url: `${req.get("host").includes("localhost") ? "http" : "https"}://${req.get("host")}/f/${userId}/${filename}?c=${encodeURIComponent(imageKeyBase64)}`
         });
     } catch (error) {
-        console.error(error);
         console.error("Upload failed for userId:", userId, error.message);
         return res.status(500).send("Error uploading file.");
     }
